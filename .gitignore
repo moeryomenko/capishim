@@ -1,0 +1,27 @@
+# Build artifacts
+bin/
+dist/
+images/*/out/
+/capishim
+/capishim.exe
+
+# Local state and credentials — never commit
+state/
+*.kubeconfig
+admin.kubeconfig
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Go
+*.test
+coverage.out
+# Added by code-review-graph
+.code-review-graph/
+
+# Plans, task evidence, and agent logs
+.plans/
+.agent/
+.logs/

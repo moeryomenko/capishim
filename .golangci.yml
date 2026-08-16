@@ -1,0 +1,148 @@
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - asasalint
+    - asciicheck
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - decorder
+    - dupl
+    - durationcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - fatcontext
+    - forcetypeassert
+    - gochecknoglobals
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - godot
+    - gofmt
+    - goheader
+    - goimports
+    - gomoddirectives
+    - gomodguard
+    - gosec
+    - lll
+    - loggercheck
+    - makezero
+    - mirror
+    - mnd
+    - musttag
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - noctx
+    - nolintlint
+    - nonamedreturns
+    - nosprintfhostport
+    - paralleltest
+    - perfsprint
+    - predeclared
+    - reassign
+    - revive
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - tagalign
+    - tagliatelle
+    - tenv
+    - testableexamples
+    - testifylint
+    - testpackage
+    - thelper
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+    - wrapcheck
+  disable:
+    - depguard
+    - exhaustruct
+    - forbidigo
+    - ireturn
+    - prealloc
+    - varnamelen
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters-settings:
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: github.com/moeryomenko/capishim
+  lll:
+    line-length: 140
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  gocritic:
+    enabled-checks:
+      - commentFormatting
+      - exitAfterDefer
+      - hexLiteral
+      - indexAlloc
+      - initClause
+      - methodExprCall
+      - nestingReduce
+      - newDeref
+      - nilValReturn
+      - offBy1
+      - paramTypeCombine
+      - ptrToRefParam
+      - rangeExprCopy
+      - regexpSimplify
+      - sloppyReassign
+      - stringXbytes
+      - switchTrue
+      - typeUnparen
+      - uncheckedInlineErr
+      - unlabelStmt
+      - unnamedResult
+      - valSwap
+      - wrapperFunc
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+  tagliatelle:
+    case:
+      use-field-name: true
+      rules:
+        json: snake
