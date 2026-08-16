@@ -1,0 +1,8 @@
+[Container]
+Pod=capishim.pod
+Image={{ .Image }}
+Volume={{ .StateDir }}/kubeconfigs:{{ .StateDir }}/kubeconfigs:ro
+Volume={{ .StateDir }}/pki/core-webhook:{{ .StateDir }}/pki/core-webhook:ro
+Requires=capishim-setup.service
+After=capishim-setup.service
+Command={{ .Command }}

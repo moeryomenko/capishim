@@ -1,0 +1,8 @@
+[Container]
+Pod=capishim.pod
+Image={{ .Image }}
+Volume={{ .StateDir }}/pki:{{ .StateDir }}/pki:rw
+Environment={{ .EnvStateDir }}={{ .StateDir }}
+[Service]
+Type=oneshot
+RemainAfterExit=yes

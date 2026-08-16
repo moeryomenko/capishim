@@ -1,0 +1,6 @@
+[Container]
+Pod=capishim.pod
+Image={{ .Image }}
+Volume={{ .StateDir }}/etcd:{{ .StateDir }}/etcd:rw
+Requires=capishim-pki.service
+After=capishim-pki.service
