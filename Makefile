@@ -4,10 +4,20 @@ RACE_DETECTOR := $(if $(RACE_DETECTOR),-race)
 IMPORT_PATH := $(shell go list -m -f {{.Path}} | head -1)
 
 # capishim-specific configuration (REQ-009, REQ-010, REQ-011)
-CAPI_SOURCE_REF ?= v1.14.2
+CAPI_SOURCE_REF ?= v1.14.0
 CAPISHIM_VERSION ?= v0.1.0
 CAPISHIM_STATE_DIR ?= $(HOME)/.local/share/capishim
 CAPISHIM_BIND_ADDRESS ?= 127.0.0.1:6443
+# Architecture for the built manager/setup binaries (also selects the
+# distroless runtime tag in the Containerfiles).
+GOARCH ?= amd64
+# Pinned stock control-plane images (REQ-011); pulled and re-tagged by `make
+# images` so quadlet Image= lines are uniform across the pod.
+# etcd: kubeadm's pinned v3.5.x etcd for the k8s v1.36 line. Note: the bare
+# 3.5.18 tag does not exist in registry.k8s.io (manifest 404); 3.5.17-0 is the
+# v1.36 default and satisfies the spec's "etcd v3.5.x".
+ETCD_IMAGE ?= registry.k8s.io/etcd:3.5.17-0
+APISERVER_IMAGE ?= registry.k8s.io/kube-apiserver:v1.36.1
 
 .PHONY: default
 default: help
@@ -53,7 +63,23 @@ clean: ## Remove build artifacts and coverage output
 
 .PHONY: images
 images: ## Build all seven container images (providers from pinned tag)
-	@echo "not implemented yet" && exit 1
+	@for comp in core cabpk kcp capd setup; do \
+		echo "==> building localhost/capishim-$${comp}:$(CAPISHIM_VERSION) (CAPI_SOURCE_REF=$(CAPI_SOURCE_REF))"; \
+		podman build \
+			--build-arg CAPI_SOURCE_REF="$(CAPI_SOURCE_REF)" \
+			--build-arg GOARCH="$(GOARCH)" \
+			-t "localhost/capishim-$${comp}:$(CAPISHIM_VERSION)" \
+			-f "images/capishim-$${comp}.Containerfile" . || exit 1; \
+	done
+	# The two control-plane components use pinned stock images (REQ-011): the
+	# pulled image is re-tagged under localhost/capishim-* so the quadlet
+	# Image= lines are uniform, which makes this target produce all seven
+	# images the pod references.
+	@podman pull "$(ETCD_IMAGE)"
+	@podman tag "$(ETCD_IMAGE)" "localhost/capishim-etcd:$(CAPISHIM_VERSION)"
+	@podman pull "$(APISERVER_IMAGE)"
+	@podman tag "$(APISERVER_IMAGE)" "localhost/capishim-apiserver:$(CAPISHIM_VERSION)"
+	@echo "built $(CAPISHIM_VERSION) capishim images (CAPI_SOURCE_REF=$(CAPI_SOURCE_REF))"
 
 .PHONY: install-quadlet
 install-quadlet: ## Render and install quadlet units into the systemd user dir
@@ -61,7 +87,7 @@ install-quadlet: ## Render and install quadlet units into the systemd user dir
 
 .PHONY: vendor-templates
 vendor-templates: ## Re-vendor in-memory templates from the pinned upstream tag
-	@echo "not implemented yet" && exit 1
+	@CAPI_SOURCE_REF="$(CAPI_SOURCE_REF)" hack/vendor.sh
 
 .PHONY: check-pins
 check-pins: ## Verify upstream pin consistency (go.mod, Containerfiles, provenance)
