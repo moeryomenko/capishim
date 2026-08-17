@@ -1,0 +1,77 @@
+# CI for capishim (REQ-012, VC-08).
+#
+# Two jobs:
+#   push  — on push + pull_request: make check (lint + vet + gotestsum tests),
+#           make check-pins (VC-10), make images (podman build of the seven
+#           component images from the pinned upstream tag).
+#   e2e   — on workflow_dispatch + push to main: make images then
+#           make test-e2e-shim (VC-01..VC-08). The e2e suite drives podman
+#           directly (e2e/shim), so this job needs no systemd.
+#
+# No secrets are required and nothing is pushed to a registry.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  push:
+    name: push (check, check-pins, images)
+    runs-on: ubuntu-latest
+    # Run only for the events this job is defined for; workflow_dispatch
+    # runs the e2e job alone.
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.26
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      # make check invokes the module tools (gotestsum, golangci-lint,
+      # golines, goimports, gofumpt) via `go tool` from the go.mod tool
+      # directives, so no separate tool install is needed.
+      - name: make check (lint + vet + tests)
+        run: make check
+
+      - name: make check-pins (upstream pin consistency)
+        run: make check-pins
+
+      # Heavy: builds the five provider/setup images from the pinned upstream
+      # tag and pulls/re-tags the two stock control-plane images. ubuntu-latest
+      # ships rootless podman, which `podman build` uses out of the box.
+      - name: make images (podman)
+        run: make images
+
+  e2e:
+    name: e2e (test-e2e-shim)
+    runs-on: ubuntu-latest
+    # workflow_dispatch, or push to main. Rootless podman on the runner is
+    # used directly by the e2e shim; no systemd user session is required.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.26
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      # The e2e suite boots the pod from the localhost/capishim-*:v0.1.0
+      # images, so they must exist before the suite runs.
+      - name: make images (podman)
+        run: make images
+
+      - name: make test-e2e-shim (rootless podman, no systemd)
+        # The suite defaults to a temp dir when unset; pin it to the runner
+        # temp path so state never leaks into the workspace.
+        env:
+          CAPISHIM_STATE_DIR: ${{ runner.temp }}/capishim-state
+        run: make test-e2e-shim
