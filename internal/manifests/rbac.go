@@ -3,6 +3,7 @@ package manifests
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -19,13 +20,29 @@ const (
 	fieldSubjects  = "subjects"
 )
 
+// aggregatedManagerRoleSuffix and managerRoleSuffix are the name suffixes of
+// the upstream aggregation-shell ClusterRole and the concrete manager
+// ClusterRole it aggregates. A ClusterRoleBinding that references the shell
+// must be redirected to the concrete role (see
+// redirectAggregatedManagerRoleRef).
+const (
+	aggregatedManagerRoleSuffix = "-aggregated-manager-role"
+	managerRoleSuffix           = "-manager-role"
+)
+
 // RewriteRBACSubjects returns a deep copy of objs in which every
 // ServiceAccount subject of a ClusterRoleBinding or RoleBinding is replaced
-// by a User subject named by the manager CN mapped to the subject's namespace
-// (REQ-004). Non-ServiceAccount subjects, roleRef, and every non-binding kind
-// pass through unchanged. A ServiceAccount subject in a namespace without a
-// mapped CN, or a RoleBinding without metadata.namespace, is an error.
-func RewriteRBACSubjects(objs []unstructured.Unstructured, cnByNamespace map[string]string) ([]unstructured.Unstructured, error) {
+// by a User subject named by the manager CN mapped to the subject's namespace,
+// and every manager ClusterRoleBinding roleRef is redirected from the
+// `<prefix>-aggregated-manager-role` aggregation shell to the concrete
+// `<prefix>-manager-role` (REQ-004). Non-ServiceAccount subjects and every
+// non-binding kind pass through unchanged; roleRefs that already name a
+// concrete role are untouched. A ServiceAccount subject in a namespace without
+// a mapped CN, or a RoleBinding without metadata.namespace, is an error.
+func RewriteRBACSubjects(
+	objs []unstructured.Unstructured,
+	cnByNamespace map[string]string,
+) ([]unstructured.Unstructured, error) {
 	out := make([]unstructured.Unstructured, len(objs))
 	for i := range objs {
 		copied := objs[i].DeepCopy()
@@ -34,6 +51,7 @@ func RewriteRBACSubjects(objs []unstructured.Unstructured, cnByNamespace map[str
 			if err := rewriteSubjects(copied, cnByNamespace); err != nil {
 				return nil, fmt.Errorf("manifests: rewrite %s %q: %w", copied.GetKind(), copied.GetName(), err)
 			}
+			redirectAggregatedManagerRoleRef(copied)
 		case kindRoleBinding:
 			if copied.GetNamespace() == "" {
 				return nil, fmt.Errorf("manifests: rewrite RoleBinding %q: no namespace", copied.GetName())
@@ -45,6 +63,33 @@ func RewriteRBACSubjects(objs []unstructured.Unstructured, cnByNamespace map[str
 		out[i] = *copied
 	}
 	return out, nil
+}
+
+// redirectAggregatedManagerRoleRef rewrites a ClusterRoleBinding whose roleRef
+// targets the `<prefix>-aggregated-manager-role` aggregation shell to the
+// concrete `<prefix>-manager-role`. capishim runs no kube-controller-manager,
+// so the ClusterRole aggregation controller never aggregates the shell and a
+// binding to it grants nothing; only the direct binding grants permissions
+// (REQ-004). Bindings that already name a concrete role are left untouched, as
+// are bindings with a missing or malformed roleRef.
+func redirectAggregatedManagerRoleRef(binding *unstructured.Unstructured) {
+	rawRef, found := binding.Object["roleRef"]
+	if !found {
+		return
+	}
+	ref, ok := rawRef.(map[string]interface{})
+	if !ok {
+		return
+	}
+	name, ok := ref[fieldName].(string)
+	if !ok {
+		return
+	}
+	prefix, ok := strings.CutSuffix(name, aggregatedManagerRoleSuffix)
+	if !ok {
+		return
+	}
+	ref[fieldName] = prefix + managerRoleSuffix
 }
 
 // rewriteSubjects replaces each ServiceAccount subject of a binding with a

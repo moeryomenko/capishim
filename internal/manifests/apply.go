@@ -44,9 +44,13 @@ func resourceFor(kind string) (resourceRef, bool) {
 	case kindRoleBinding:
 		return resourceRef{gvr: rbacv1.SchemeGroupVersion.WithResource("rolebindings"), namespaced: true}, true
 	case kindMutatingWebhookConfiguration:
-		return resourceRef{gvr: admissionregistrationv1.SchemeGroupVersion.WithResource("mutatingwebhookconfigurations")}, true
+		return resourceRef{
+			gvr: admissionregistrationv1.SchemeGroupVersion.WithResource("mutatingwebhookconfigurations"),
+		}, true
 	case kindValidatingWebhookConfiguration:
-		return resourceRef{gvr: admissionregistrationv1.SchemeGroupVersion.WithResource("validatingwebhookconfigurations")}, true
+		return resourceRef{
+			gvr: admissionregistrationv1.SchemeGroupVersion.WithResource("validatingwebhookconfigurations"),
+		}, true
 	}
 	return resourceRef{}, false
 }
@@ -67,13 +71,22 @@ func Apply(ctx context.Context, client dynamic.Interface, objs []unstructured.Un
 		}
 		key := applyKey(obj, ref)
 		if first, ok := seen[key]; ok {
-			return fmt.Errorf("manifests: apply %s %q: duplicate identifier, first applied as %s", obj.GetKind(), obj.GetName(), first)
+			return fmt.Errorf(
+				"manifests: apply %s %q: duplicate identifier, first applied as %s",
+				obj.GetKind(),
+				obj.GetName(),
+				first,
+			)
 		}
 		seen[key] = obj.GetKind() + "/" + obj.GetName()
 	}
 
 	for i := range objs {
-		obj := &objs[i]
+		// Work on a copy so the create-or-update bookkeeping (notably the
+		// resourceVersion adopted for updates) never leaks back into the
+		// caller's objects: a leaked resourceVersion would poison a later
+		// Create with the same object.
+		obj := objs[i].DeepCopy()
 		ref, _ := resourceFor(obj.GetKind())
 		resource := client.Resource(ref.gvr)
 		var ri dynamic.ResourceInterface = resource
@@ -82,6 +95,14 @@ func Apply(ctx context.Context, client dynamic.Interface, objs []unstructured.Un
 		}
 		_, err := ri.Create(ctx, obj, metav1.CreateOptions{})
 		if apierrors.IsAlreadyExists(err) {
+			existing, getErr := ri.Get(ctx, obj.GetName(), metav1.GetOptions{})
+			if getErr != nil {
+				return fmt.Errorf("manifests: apply %s %q: read existing for update: %w", obj.GetKind(), obj.GetName(), getErr)
+			}
+			// A real apiserver rejects updates without the current
+			// resourceVersion; adopt the existing object's so a repeated
+			// Apply converges instead of failing (REQ-003, REQ-004).
+			obj.SetResourceVersion(existing.GetResourceVersion())
 			_, err = ri.Update(ctx, obj, metav1.UpdateOptions{})
 		}
 		if err != nil {
@@ -137,7 +158,11 @@ func WaitForCRDEstablished(
 // firstUnestablishedCRD returns the first name in names whose CRD does not
 // yet report Established, or "" when all are established. A CRD that cannot
 // be read is an error.
-func firstUnestablishedCRD(ctx context.Context, client apiextclientv1.ApiextensionsV1Interface, names []string) (string, error) {
+func firstUnestablishedCRD(
+	ctx context.Context,
+	client apiextclientv1.ApiextensionsV1Interface,
+	names []string,
+) (string, error) {
 	for _, name := range names {
 		crd, err := client.CustomResourceDefinitions().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {

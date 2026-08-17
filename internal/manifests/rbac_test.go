@@ -7,9 +7,16 @@
 //     with the pki CN contract). The provider CN is looked up from the
 //     subject's namespace (capi-system, capi-kubeadm-bootstrap-system,
 //     capi-kubeadm-control-plane-system, capd-system).
-//   - roleRef and the Role/ClusterRole objects pass through untouched, so the
-//     aggregation label/rule structure of the core and kcp aggregated manager
-//     roles survives.
+//   - The manager ClusterRoleBinding roleRef is REDIRECTED from the
+//     `<prefix>-aggregated-manager-role` aggregation shell to the concrete
+//     `<prefix>-manager-role`. capishim runs no kube-controller-manager, so
+//     the ClusterRole aggregation controller never executes and an
+//     aggregation-rule binding grants nothing; only a direct binding to the
+//     concrete role grants permissions (TASK-018 e2e finding). Bindings that
+//     already point at the concrete role are left untouched.
+//   - Role/ClusterRole objects pass through untouched, so the aggregation
+//     label/rule structure of the core and kcp aggregated manager roles
+//     survives verbatim (harmless; the redirect is what grants permissions).
 //   - Namespaced RoleBindings stay in the provider namespace.
 //   - A RoleBinding without metadata.namespace is an error: placement cannot
 //     be determined, and guessing would silently misplace permissions.
@@ -32,42 +39,54 @@ import (
 )
 
 // providerRBAC is the per-provider RBAC contract derived from the vendored
-// manifests: kustomize-prefixed binding names, the referenced roles, the
-// provider namespace, and the manager identity CN (REQ-002/pki contract).
+// manifests: kustomize-prefixed binding names, the provider namespace, the
+// manager identity CN (REQ-002/pki contract), and the roleRefs of the manager
+// ClusterRoleBinding before (crbOrigRoleRef, as rendered) and after
+// (crbRoleRef) the rewrite. crbRoleRef is the CONCRETE manager role the
+// binding must point at: for core and kcp the rendered binding references the
+// aggregated-manager-role shell, which grants nothing without the ClusterRole
+// aggregation controller (absent in capishim), so the rewrite redirects it to
+// the concrete role.
 type providerRBAC struct {
-	dir        string
-	namespace  string
-	cn         string
-	crbName    string
-	crbRoleRef string
-	rbName     string
-	rbRole     string
+	dir            string
+	namespace      string
+	cn             string
+	crbName        string
+	crbRoleRef     string // roleRef after rewrite: concrete <prefix>-manager-role
+	crbOrigRoleRef string // roleRef before rewrite, as rendered in the fixture
+	rbName         string
+	rbRole         string
 }
 
 // allProviderRBACs returns the per-provider RBAC contract derived from the
-// vendored manifests: kustomize-prefixed binding names, the referenced roles,
-// the provider namespace, and the manager identity CN (REQ-002/pki contract).
+// vendored manifests: kustomize-prefixed binding names, the provider
+// namespace, the manager identity CN (REQ-002/pki contract), and the manager
+// ClusterRoleBinding roleRefs before/after the aggregation redirect.
 func allProviderRBACs() []providerRBAC {
 	return []providerRBAC{
 		{
 			dir: "core", namespace: "capi-system", cn: "capishim:core-manager",
-			crbName: "capi-manager-rolebinding", crbRoleRef: "capi-aggregated-manager-role",
-			rbName: "capi-leader-election-rolebinding", rbRole: "capi-leader-election-role",
+			crbName: "capi-manager-rolebinding", crbRoleRef: "capi-manager-role",
+			crbOrigRoleRef: "capi-aggregated-manager-role",
+			rbName:         "capi-leader-election-rolebinding", rbRole: "capi-leader-election-role",
 		},
 		{
 			dir: "cabpk", namespace: "capi-kubeadm-bootstrap-system", cn: "capishim:cabpk-manager",
 			crbName: "capi-kubeadm-bootstrap-manager-rolebinding", crbRoleRef: "capi-kubeadm-bootstrap-manager-role",
-			rbName: "capi-kubeadm-bootstrap-leader-election-rolebinding", rbRole: "capi-kubeadm-bootstrap-leader-election-role",
+			crbOrigRoleRef: "capi-kubeadm-bootstrap-manager-role",
+			rbName:         "capi-kubeadm-bootstrap-leader-election-rolebinding", rbRole: "capi-kubeadm-bootstrap-leader-election-role",
 		},
 		{
 			dir: "kcp", namespace: "capi-kubeadm-control-plane-system", cn: "capishim:kcp-manager",
-			crbName: "capi-kubeadm-control-plane-manager-rolebinding", crbRoleRef: "capi-kubeadm-control-plane-aggregated-manager-role",
-			rbName: "capi-kubeadm-control-plane-leader-election-rolebinding", rbRole: "capi-kubeadm-control-plane-leader-election-role",
+			crbName: "capi-kubeadm-control-plane-manager-rolebinding", crbRoleRef: "capi-kubeadm-control-plane-manager-role",
+			crbOrigRoleRef: "capi-kubeadm-control-plane-aggregated-manager-role",
+			rbName:         "capi-kubeadm-control-plane-leader-election-rolebinding", rbRole: "capi-kubeadm-control-plane-leader-election-role",
 		},
 		{
 			dir: "capd", namespace: "capd-system", cn: "capishim:capd-manager",
 			crbName: "capd-manager-rolebinding", crbRoleRef: "capd-manager-role",
-			rbName: "capd-leader-election-rolebinding", rbRole: "capd-leader-election-role",
+			crbOrigRoleRef: "capd-manager-role",
+			rbName:         "capd-leader-election-rolebinding", rbRole: "capd-leader-election-role",
 		},
 	}
 }
@@ -114,17 +133,23 @@ func requireSubject(t *testing.T, binding *unstructured.Unstructured, idx int, k
 
 func requireRoleRef(t *testing.T, binding *unstructured.Unstructured, kind, name string) {
 	t.Helper()
+	gotName := roleRefName(t, binding)
 	gotKind, found, err := unstructured.NestedString(binding.Object, "roleRef", "kind")
 	if err != nil || !found {
 		t.Fatalf("binding %s has no roleRef.kind: %v", binding.GetName(), err)
 	}
-	gotName, found, err := unstructured.NestedString(binding.Object, "roleRef", "name")
-	if err != nil || !found {
-		t.Fatalf("binding %s has no roleRef.name: %v", binding.GetName(), err)
-	}
 	if gotKind != kind || gotName != name {
 		t.Errorf("binding %s roleRef = %s/%s, want %s/%s", binding.GetName(), gotKind, gotName, kind, name)
 	}
+}
+
+func roleRefName(t *testing.T, binding *unstructured.Unstructured) string {
+	t.Helper()
+	name, found, err := unstructured.NestedString(binding.Object, "roleRef", "name")
+	if err != nil || !found {
+		t.Fatalf("binding %s has no roleRef.name: %v", binding.GetName(), err)
+	}
+	return name
 }
 
 func firstAggregationMatchLabels(t *testing.T, obj *unstructured.Unstructured) map[string]string {
@@ -168,7 +193,10 @@ func TestRewriteRBACSubjectsVendored(t *testing.T) {
 			}
 
 			// The manager ClusterRoleBinding: subject ServiceAccount -> User CN,
-			// roleRef preserved.
+			// roleRef redirected from the aggregation shell (if any) to the
+			// concrete manager role.
+			inCRB := findByKindName(t, objs, "ClusterRoleBinding", p.crbName)
+			requireRoleRef(t, inCRB, "ClusterRole", p.crbOrigRoleRef)
 			crb := findByKindName(t, rewritten, "ClusterRoleBinding", p.crbName)
 			requireSubject(t, crb, 0, "User", p.cn)
 			requireRoleRef(t, crb, "ClusterRole", p.crbRoleRef)
@@ -182,12 +210,64 @@ func TestRewriteRBACSubjectsVendored(t *testing.T) {
 			requireSubject(t, rb, 0, "User", p.cn)
 			requireRoleRef(t, rb, "Role", p.rbRole)
 
-			// Roles are not rewritten: the aggregated manager role survives
-			// unchanged.
-			inAgg := findByKindName(t, objs, "ClusterRole", p.crbRoleRef)
-			outAgg := findByKindName(t, rewritten, "ClusterRole", p.crbRoleRef)
-			if !reflect.DeepEqual(outAgg.Object, inAgg.Object) {
+			// Roles are not rewritten: the concrete manager role (and the
+			// aggregated shell where one exists) survive byte-for-byte.
+			inRole := findByKindName(t, objs, "ClusterRole", p.crbRoleRef)
+			outRole := findByKindName(t, rewritten, "ClusterRole", p.crbRoleRef)
+			if !reflect.DeepEqual(outRole.Object, inRole.Object) {
 				t.Errorf("RewriteRBACSubjects modified ClusterRole %s; roles must pass through untouched", p.crbRoleRef)
+			}
+			if p.crbOrigRoleRef != p.crbRoleRef {
+				inAgg := findByKindName(t, objs, "ClusterRole", p.crbOrigRoleRef)
+				outAgg := findByKindName(t, rewritten, "ClusterRole", p.crbOrigRoleRef)
+				if !reflect.DeepEqual(outAgg.Object, inAgg.Object) {
+					t.Errorf("RewriteRBACSubjects modified ClusterRole %s; roles must pass through untouched", p.crbOrigRoleRef)
+				}
+			}
+		})
+	}
+}
+
+func TestRewriteRBACSubjectsRedirectsAggregatedRoleRef(t *testing.T) {
+	t.Parallel()
+	cnByNS := providerCNByNamespace()
+	for _, p := range allProviderRBACs() {
+		t.Run(p.dir, func(t *testing.T) {
+			t.Parallel()
+			objs := mustLoadVendored(t, p.dir)
+			rewritten, err := manifests.RewriteRBACSubjects(objs, cnByNS)
+			if err != nil {
+				t.Fatalf("RewriteRBACSubjects(%s): %v", p.dir, err)
+			}
+
+			inCRB := findByKindName(t, objs, "ClusterRoleBinding", p.crbName)
+			outCRB := findByKindName(t, rewritten, "ClusterRoleBinding", p.crbName)
+
+			// The fixture binding must carry the recorded original roleRef.
+			requireRoleRef(t, inCRB, "ClusterRole", p.crbOrigRoleRef)
+			// The rewritten binding must point at the concrete manager role.
+			requireRoleRef(t, outCRB, "ClusterRole", p.crbRoleRef)
+			// The redirect target must be present as an applied ClusterRole.
+			findByKindName(t, rewritten, "ClusterRole", p.crbRoleRef)
+
+			if p.crbOrigRoleRef != p.crbRoleRef {
+				// core/kcp: aggregated shell -> concrete role. Without the
+				// ClusterRole aggregation controller (no kube-controller-
+				// manager in capishim) an aggregation-rule binding grants
+				// nothing, so the redirect is mandatory.
+				gotOrig := roleRefName(t, inCRB)
+				gotNew := roleRefName(t, outCRB)
+				if gotOrig == gotNew {
+					t.Errorf("binding %s roleRef %q unchanged; want redirect to %q", p.crbName, gotNew, p.crbRoleRef)
+				}
+			} else {
+				// cabpk/capd: the rendered binding already targets the concrete
+				// role; it must pass through untouched.
+				gotOrig := roleRefName(t, inCRB)
+				gotNew := roleRefName(t, outCRB)
+				if gotOrig != gotNew {
+					t.Errorf("binding %s roleRef changed from %q to %q; want untouched", p.crbName, gotOrig, gotNew)
+				}
 			}
 		})
 	}
@@ -254,7 +334,9 @@ func TestRewriteRBACSubjectsPreservesOtherKinds(t *testing.T) {
 	mwhIn := findByKindName(t, objs, "MutatingWebhookConfiguration", "capi-mutating-webhook-configuration")
 	mwhOut := findByKindName(t, rewritten, "MutatingWebhookConfiguration", "capi-mutating-webhook-configuration")
 	if !reflect.DeepEqual(mwhOut.Object, mwhIn.Object) {
-		t.Error("RewriteRBACSubjects modified the MutatingWebhookConfiguration; non-binding kinds must pass through untouched")
+		t.Error(
+			"RewriteRBACSubjects modified the MutatingWebhookConfiguration; non-binding kinds must pass through untouched",
+		)
 	}
 }
 
@@ -395,6 +477,9 @@ func TestRBACPipelineAllProviders(t *testing.T) {
 	for _, p := range allProviderRBACs() {
 		crb := byName(t, crbList.Items, p.crbName)
 		requireSubject(t, crb, 0, "User", p.cn)
+		// The applied binding points at the concrete manager role (the
+		// aggregation redirect survives the pipeline); the aggregated shell
+		// is applied too but grants nothing without the aggregation controller.
 		requireRoleRef(t, crb, "ClusterRole", p.crbRoleRef)
 
 		rb := byName(t, rbList.Items, p.rbName)

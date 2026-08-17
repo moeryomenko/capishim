@@ -31,12 +31,22 @@ func TestKeep(t *testing.T) {
 		want       bool
 	}{
 		{name: "namespace", apiVersion: "v1", kind: "Namespace", want: true},
-		{name: "customresourcedefinition", apiVersion: "apiextensions.k8s.io/v1", kind: "CustomResourceDefinition", want: true},
+		{
+			name:       "customresourcedefinition",
+			apiVersion: "apiextensions.k8s.io/v1",
+			kind:       "CustomResourceDefinition",
+			want:       true,
+		},
 		{name: "clusterrole", apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", want: true},
 		{name: "clusterrolebinding", apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", want: true},
 		{name: "role", apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", want: true},
 		{name: "rolebinding", apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", want: true},
-		{name: "mutatingwebhookconfiguration", apiVersion: "admissionregistration.k8s.io/v1", kind: "MutatingWebhookConfiguration", want: true},
+		{
+			name:       "mutatingwebhookconfiguration",
+			apiVersion: "admissionregistration.k8s.io/v1",
+			kind:       "MutatingWebhookConfiguration",
+			want:       true,
+		},
 		{
 			name:       "validatingwebhookconfiguration",
 			apiVersion: "admissionregistration.k8s.io/v1",
@@ -55,7 +65,12 @@ func TestKeep(t *testing.T) {
 
 		// Keep must check the group/version, not only the kind: a legacy
 		// rbac v1beta1 ClusterRole is not the applied v1 object.
-		{name: "clusterrole-wrong-version", apiVersion: "rbac.authorization.k8s.io/v1beta1", kind: "ClusterRole", want: false},
+		{
+			name:       "clusterrole-wrong-version",
+			apiVersion: "rbac.authorization.k8s.io/v1beta1",
+			kind:       "ClusterRole",
+			want:       false,
+		},
 		{name: "namespace-wrong-group", apiVersion: "other.io/v1", kind: "Namespace", want: false},
 	}
 	for _, tt := range tests {
