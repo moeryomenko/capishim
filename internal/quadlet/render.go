@@ -2,7 +2,7 @@
 // pod: one pod unit and one container unit per component in the config table.
 // The rendered units are the sources installed by make install-quadlet, so
 // the pod network namespace, publish port, dependency chain, image
-// references, volume mounts, environment, and manager command flags (REQ-001,
+// references, volume mounts, environment, and manager Exec lines (REQ-001,
 // REQ-006, REQ-009, REQ-010, REQ-011) all come from this package.
 package quadlet
 
@@ -32,6 +32,11 @@ const (
 	// containerPort is the apiserver port inside the pod; the pod always
 	// publishes it regardless of the host-side bind port (REQ-010).
 	containerPort = "6443"
+
+	// etcdClientPort and etcdPeerPort are the fixed pod-internal etcd ports
+	// used by the etcd Exec line (mirrors e2e/shim/components.go).
+	etcdClientPort = "2379"
+	etcdPeerPort   = "2380"
 
 	// localImagePrefix identifies capishim-built images whose tag the
 	// renderer rewrites to the requested version.
@@ -64,8 +69,8 @@ type templateData struct {
 	EnvStateDir string
 	// EnvBindAddr is the CAPISHIM_BIND_ADDRESS environment key.
 	EnvBindAddr string
-	// Command is the manager command line; empty for non-manager units.
-	Command string
+	// Exec is the container command line; empty for units without one.
+	Exec string
 }
 
 // Render renders the full quadlet unit set: the pod unit plus one container
@@ -147,8 +152,8 @@ func unitFileName(id config.ComponentID) string {
 }
 
 // unitDataFor builds the template data for one component: the rewritten image
-// reference, the volume mount roots, and for manager components the command
-// line.
+// reference, the volume mount roots, and for the etcd, apiserver, and manager
+// components the Exec command line.
 func unitDataFor(spec config.ComponentSpec, in Input) templateData {
 	data := templateData{
 		Image:       imageFor(spec.Image, in.Version),
@@ -157,8 +162,15 @@ func unitDataFor(spec config.ComponentSpec, in Input) templateData {
 		EnvStateDir: config.EnvStateDir,
 		EnvBindAddr: config.EnvBindAddress,
 	}
-	if spec.WebhookPort != 0 {
-		data.Command = commandFor(spec, in.Config.StateDir)
+	switch spec.ID {
+	case config.ComponentEtcd:
+		data.Exec = etcdExec(in.Config.StateDir)
+	case config.ComponentAPIServer:
+		data.Exec = apiserverExec(in.Config.StateDir)
+	case config.ComponentCore, config.ComponentCABPK, config.ComponentKCP, config.ComponentCAPD:
+		data.Exec = managerExec(spec, in.Config.StateDir)
+	case config.ComponentPKI, config.ComponentSetup:
+		// Oneshot containers carry no Exec line.
 	}
 	return data
 }
@@ -177,23 +189,71 @@ func imageFor(ref, version string) string {
 	return ref[:i] + ":" + version
 }
 
-// commandFor builds the manager command line: the kubeconfig path, the
-// component's webhook port and cert directory, leader election flags, and for
-// the core manager the ClusterTopology feature gate (REQ-006).
-func commandFor(spec config.ComponentSpec, stateDir string) string {
-	var b strings.Builder
-	b.WriteString("--kubeconfig=")
-	b.WriteString(filepath.Join(stateDir, spec.Kubeconfig))
-	b.WriteString(" --webhook-port=")
-	b.WriteString(strconv.Itoa(spec.WebhookPort))
-	b.WriteString(" --webhook-cert-dir=")
-	b.WriteString(filepath.Join(stateDir, "pki", string(spec.ID)+"-webhook"))
-	b.WriteString(" --leader-elect --leader-election-namespace=")
-	b.WriteString(spec.ProviderNamespace)
-	if spec.ID == config.ComponentCore {
-		b.WriteString(" --feature-gates=ClusterTopology=true")
-	}
-	return b.String()
+// etcdExec builds the etcd Exec line: a single-node TLS cluster on loopback
+// with the server certificate minted by the pki container, client and peer
+// traffic both authenticated (mirrors e2e/shim/components.go).
+func etcdExec(stateDir string) string {
+	return strings.Join([]string{
+		"etcd",
+		"--name=capishim-etcd",
+		"--data-dir=" + filepath.Join(stateDir, "etcd"),
+		"--listen-client-urls=https://127.0.0.1:" + etcdClientPort,
+		"--advertise-client-urls=https://127.0.0.1:" + etcdClientPort,
+		"--listen-peer-urls=https://127.0.0.1:" + etcdPeerPort,
+		"--initial-advertise-peer-urls=https://127.0.0.1:" + etcdPeerPort,
+		"--initial-cluster=capishim-etcd=https://127.0.0.1:" + etcdPeerPort,
+		"--cert-file=" + filepath.Join(stateDir, "pki", "etcd-server.crt"),
+		"--key-file=" + filepath.Join(stateDir, "pki", "etcd-server.key"),
+		"--trusted-ca-file=" + filepath.Join(stateDir, "pki", "ca.crt"),
+		"--client-cert-auth=true",
+		"--peer-cert-file=" + filepath.Join(stateDir, "pki", "etcd-server.crt"),
+		"--peer-key-file=" + filepath.Join(stateDir, "pki", "etcd-server.key"),
+		"--peer-trusted-ca-file=" + filepath.Join(stateDir, "pki", "ca.crt"),
+		"--peer-client-cert-auth=true",
+	}, " ")
+}
+
+// apiserverExec builds the kube-apiserver Exec line: etcd TLS client certs,
+// the serving cert, SA signing keypair, ABAC+RBAC authorization with the
+// bootstrap policy file, and a pod-wide bind so rootless podman port
+// publishing can reach it (mirrors e2e/shim/components.go).
+func apiserverExec(stateDir string) string {
+	return strings.Join([]string{
+		"kube-apiserver",
+		"--etcd-servers=https://127.0.0.1:" + etcdClientPort,
+		"--etcd-cafile=" + filepath.Join(stateDir, "pki", "ca.crt"),
+		"--etcd-certfile=" + filepath.Join(stateDir, "pki", "apiserver-client.crt"),
+		"--etcd-keyfile=" + filepath.Join(stateDir, "pki", "apiserver-client.key"),
+		"--client-ca-file=" + filepath.Join(stateDir, "pki", "ca.crt"),
+		"--tls-cert-file=" + filepath.Join(stateDir, "pki", "apiserver.crt"),
+		"--tls-private-key-file=" + filepath.Join(stateDir, "pki", "apiserver.key"),
+		"--service-account-key-file=" + filepath.Join(stateDir, "pki", "sa.pub"),
+		"--service-account-signing-key-file=" + filepath.Join(stateDir, "pki", "sa.key"),
+		"--service-account-issuer=https://127.0.0.1:" + containerPort,
+		"--authorization-mode=ABAC,RBAC",
+		"--authorization-policy-file=" + filepath.Join(stateDir, "abac", "policy.json"),
+		"--bind-address=0.0.0.0",
+		"--secure-port=" + containerPort,
+		"--service-cluster-ip-range=10.128.0.0/12",
+		"--allow-privileged=true",
+	}, " ")
+}
+
+// managerExec builds the manager Exec line: the kubeconfig, webhook port and
+// cert directory, per-manager health and diagnostics listeners, and the
+// ClusterTopology feature gate on every manager (REQ-006 as corrected by the
+// e2e proof). No leader-election flags: the v1.14 binaries reject
+// --leader-election-namespace and controller-runtime cannot default an
+// election namespace outside a cluster.
+func managerExec(spec config.ComponentSpec, stateDir string) string {
+	return strings.Join([]string{
+		"--kubeconfig=" + filepath.Join(stateDir, spec.Kubeconfig),
+		"--webhook-port=" + strconv.Itoa(spec.WebhookPort),
+		"--webhook-cert-dir=" + filepath.Join(stateDir, "pki", string(spec.ID)+"-webhook"),
+		"--health-addr=127.0.0.1:" + strconv.Itoa(spec.HealthPort),
+		"--diagnostics-address=127.0.0.1:" + strconv.Itoa(spec.DiagnosticsPort),
+		"--feature-gates=ClusterTopology=true",
+	}, " ")
 }
 
 // executeTemplate loads, parses, and executes the unit template with the

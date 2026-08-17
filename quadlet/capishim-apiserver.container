@@ -1,6 +1,10 @@
+[Unit]
+Requires=capishim-etcd.service
+After=capishim-etcd.service
+
 [Container]
 Pod=capishim.pod
 Image={{ .Image }}
 Volume={{ .StateDir }}/pki:{{ .StateDir }}/pki:ro
-Requires=capishim-etcd.service
-After=capishim-etcd.service
+Volume={{ .StateDir }}/abac:{{ .StateDir }}/abac:ro
+Exec={{ .Exec }}

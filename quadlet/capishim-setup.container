@@ -1,3 +1,7 @@
+[Unit]
+Requires=capishim-apiserver.service
+After=capishim-apiserver.service
+
 [Container]
 Pod=capishim.pod
 Image={{ .Image }}
@@ -5,8 +9,7 @@ Volume={{ .StateDir }}/pki:{{ .StateDir }}/pki:ro
 Volume={{ .StateDir }}/kubeconfigs:{{ .StateDir }}/kubeconfigs:rw
 Environment={{ .EnvStateDir }}={{ .StateDir }}
 Environment={{ .EnvBindAddr }}={{ .BindAddress }}
-Requires=capishim-apiserver.service
-After=capishim-apiserver.service
+User=0
 [Service]
 Type=oneshot
 RemainAfterExit=yes

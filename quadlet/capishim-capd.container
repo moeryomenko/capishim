@@ -1,8 +1,13 @@
+[Unit]
+Requires=capishim-setup.service
+After=capishim-setup.service
+
 [Container]
 Pod=capishim.pod
 Image={{ .Image }}
+Volume={{ .StateDir }}/pki:{{ .StateDir }}/pki:ro
 Volume={{ .StateDir }}/kubeconfigs:{{ .StateDir }}/kubeconfigs:ro
 Volume={{ .StateDir }}/pki/capd-webhook:{{ .StateDir }}/pki/capd-webhook:ro
-Requires=capishim-setup.service
-After=capishim-setup.service
-Command={{ .Command }}
+Environment=POD_IP=127.0.0.1
+Exec={{ .Exec }}
+User=0

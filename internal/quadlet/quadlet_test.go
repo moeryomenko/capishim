@@ -30,16 +30,42 @@
 //     table image, not the component ID: pki reuses the capishim-setup image.
 //   - Volume= lines mount the state directory at the same path inside the
 //     container with explicit :rw/:ro semantics: pki mounts <state>/pki rw,
-//     etcd mounts <state>/etcd rw, apiserver mounts <state>/pki ro, setup
+//     etcd mounts <state>/etcd rw and <state>/pki ro (etcd reads its TLS certs
+//     from pki), apiserver mounts <state>/pki ro and <state>/abac ro, setup
 //     mounts <state>/pki ro and <state>/kubeconfigs rw, each manager mounts
-//     <state>/kubeconfigs ro and <state>/pki/<id>-webhook ro (REQ-009 layout).
-//   - Manager units carry a Command= line supplying the /manager flags
-//     (REQ-006; the provider image entrypoints are the stock binaries, so
-//     quadlet Command= is the spec-faithful carrier): --kubeconfig=<state>
+//     <state>/pki ro, <state>/kubeconfigs ro and <state>/pki/<id>-webhook ro
+//     (REQ-009 layout corrected by the e2e proof).
+//   - Manager units carry an Exec= line supplying the /manager flags (the
+//     proven runtime contract from the e2e podman driver,
+//     e2e/shim/components.go; REQ-006 as corrected): --kubeconfig=<state>
 //     /kubeconfigs/<id>.kubeconfig, --webhook-port=<table port>,
-//     --webhook-cert-dir=<state>/pki/<id>-webhook, --leader-elect, and
-//     --leader-election-namespace=<table namespace>. Core additionally carries
-//     --feature-gates=ClusterTopology=true; no non-core manager does.
+//     --webhook-cert-dir=<state>/pki/<id>-webhook,
+//     --health-addr=127.0.0.1:<health port> and
+//     --diagnostics-address=127.0.0.1:<diagnostics port> (per-manager ports
+//     core 9451/8451, cabpk 9452/8452, kcp 9453/8453, capd 9454/8454 — literal
+//     here until a TASK-002/003 amendment adds HealthPort/DiagnosticsPort to
+//     ComponentSpec), and --feature-gates=ClusterTopology=true on ALL FOUR
+//     managers (bootstrap and infrastructure webhooks gate topology fields; the
+//     REQ-006 "core only" letter is superseded by the e2e proof). No
+//     --leader-elect or --leader-election-namespace anywhere: the v1.14
+//     binaries reject the namespace flag and controller-runtime cannot default
+//     an election namespace outside a cluster (plan assumption 5 superseded).
+//   - The etcd unit carries an Exec= line with the full working flag set
+//     mirroring the e2e driver: client and peer TLS on loopback with certs from
+//     <state>/pki (plan assumption 8 is superseded: peer traffic is TLS too).
+//   - The apiserver unit carries an Exec= line with the full working flag set:
+//     --etcd-servers + etcd TLS client certs, apiserver serving cert, SA
+//     signing keypair, --authorization-mode=ABAC,RBAC with
+//     --authorization-policy-file=<state>/abac/policy.json (kube-apiserver
+//     v1.36 removed --authorization-rbac-super-user, so the setup container
+//     must bootstrap RBAC from a clean cluster), --bind-address=0.0.0.0
+//     (rootless podman forwards host traffic to the pod IP, not pod loopback),
+//     --secure-port=6443 and the cluster CIDR.
+//   - pki, setup and the four managers run as User=0: the distroless nonroot
+//     uid (65532) cannot write a host-owned state dir under rootless podman.
+//   - The capd unit carries Environment=POD_IP=127.0.0.1: the in-memory backend
+//     mux host becomes the workload ControlPlaneEndpoint and the server of the
+//     generated <cluster>-kubeconfig Secrets (REQ-008).
 //   - Environment= lines carry only the values the capishim-built binaries
 //     consume via config.Load (REQ-010): CAPISHIM_STATE_DIR on pki and setup,
 //     and CAPISHIM_BIND_ADDRESS on setup.
@@ -320,7 +346,9 @@ func TestRenderVolumes(t *testing.T) {
 
 	wantIn("capishim-pki.container", mount("pki", false))
 	wantIn("capishim-etcd.container", mount("etcd", false))
+	wantIn("capishim-etcd.container", mount("pki", true))
 	wantIn("capishim-apiserver.container", mount("pki", true))
+	wantIn("capishim-apiserver.container", mount("abac", true))
 	wantIn("capishim-setup.container", mount("pki", true))
 	wantIn("capishim-setup.container", mount("kubeconfigs", false))
 	for _, spec := range config.Components() {
@@ -328,14 +356,31 @@ func TestRenderVolumes(t *testing.T) {
 			continue
 		}
 		name := "capishim-" + string(spec.ID) + ".container"
+		wantIn(name, mount("pki", true))
 		wantIn(name, mount("kubeconfigs", true))
 		wantIn(name, mount(filepath.Join("pki", string(spec.ID)+"-webhook"), true))
 	}
 }
 
-func TestRenderManagerCommand(t *testing.T) {
+func TestRenderManagerExec(t *testing.T) {
 	t.Parallel()
 	units := renderWith(t, testVersion, testBind)
+	// Health and diagnostics ports are not yet fields of config.ComponentSpec
+	// (a TASK-002/003 amendment is needed); the proven e2e driver assigns the
+	// per-manager values below because the manager defaults collide inside the
+	// shared pod network namespace.
+	healthPorts := map[config.ComponentID]int{
+		config.ComponentCore:  9451,
+		config.ComponentCABPK: 9452,
+		config.ComponentKCP:   9453,
+		config.ComponentCAPD:  9454,
+	}
+	diagnosticsPorts := map[config.ComponentID]int{
+		config.ComponentCore:  8451,
+		config.ComponentCABPK: 8452,
+		config.ComponentKCP:   8453,
+		config.ComponentCAPD:  8454,
+	}
 	wantFlags := func(id config.ComponentID) []string {
 		spec, ok := config.Component(id)
 		if !ok {
@@ -345,32 +390,114 @@ func TestRenderManagerCommand(t *testing.T) {
 			"--kubeconfig=" + filepath.Join(testStateDir, spec.Kubeconfig),
 			"--webhook-port=" + strconv.Itoa(spec.WebhookPort),
 			"--webhook-cert-dir=" + filepath.Join(testStateDir, "pki", string(spec.ID)+"-webhook"),
-			"--leader-elect",
-			"--leader-election-namespace=" + spec.ProviderNamespace,
+			"--health-addr=127.0.0.1:" + strconv.Itoa(healthPorts[id]),
+			"--diagnostics-address=127.0.0.1:" + strconv.Itoa(diagnosticsPorts[id]),
+			// REQ-006 corrected by the e2e proof: every manager webhook gates
+			// topology fields, so all four run with ClusterTopology=true.
+			"--feature-gates=ClusterTopology=true",
 		}
 	}
-	managerIDs := []config.ComponentID{config.ComponentCore, config.ComponentCABPK, config.ComponentKCP, config.ComponentCAPD}
+	managerIDs := []config.ComponentID{
+		config.ComponentCore,
+		config.ComponentCABPK,
+		config.ComponentKCP,
+		config.ComponentCAPD,
+	}
 	for _, id := range managerIDs {
 		t.Run(string(id), func(t *testing.T) {
 			t.Parallel()
 			name := "capishim-" + string(id) + ".container"
-			cmd := unitValue(t, units[name], "Command")
+			exec := unitValue(t, units[name], "Exec")
 			for _, flag := range wantFlags(id) {
-				if !strings.Contains(cmd, flag) {
-					t.Errorf("%s Command missing %s; got %q", name, flag, cmd)
+				if !strings.Contains(exec, flag) {
+					t.Errorf("%s Exec missing %s; got %q", name, flag, exec)
 				}
+			}
+			// The v1.14 binaries reject --leader-election-namespace and
+			// controller-runtime cannot default an election namespace outside a
+			// cluster: no leader-election flags anywhere (plan assumption 5
+			// superseded by the e2e proof).
+			if strings.Contains(exec, "--leader-elect") || strings.Contains(exec, "--leader-election-namespace") {
+				t.Errorf("%s Exec carries leader-election flags (superseded):\n%s", name, exec)
 			}
 		})
 	}
-	// REQ-006: only core carries the ClusterTopology feature gate.
-	core := unitValue(t, units["capishim-core.container"], "Command")
-	if !strings.Contains(core, "--feature-gates=ClusterTopology=true") {
-		t.Errorf("capishim-core.container Command missing --feature-gates=ClusterTopology=true; got %q", core)
+}
+
+func TestRenderEtcdExec(t *testing.T) {
+	t.Parallel()
+	units := renderWith(t, testVersion, testBind)
+	exec := unitValue(t, units["capishim-etcd.container"], "Exec")
+	wantFlags := []string{
+		"etcd --name=capishim-etcd",
+		"--data-dir=" + filepath.Join(testStateDir, "etcd"),
+		"--listen-client-urls=https://127.0.0.1:2379",
+		"--advertise-client-urls=https://127.0.0.1:2379",
+		"--listen-peer-urls=https://127.0.0.1:2380",
+		"--initial-advertise-peer-urls=https://127.0.0.1:2380",
+		"--initial-cluster=capishim-etcd=https://127.0.0.1:2380",
+		"--cert-file=" + filepath.Join(testStateDir, "pki", "etcd-server.crt"),
+		"--key-file=" + filepath.Join(testStateDir, "pki", "etcd-server.key"),
+		"--trusted-ca-file=" + filepath.Join(testStateDir, "pki", "ca.crt"),
+		"--client-cert-auth=true",
+		"--peer-cert-file=" + filepath.Join(testStateDir, "pki", "etcd-server.crt"),
+		"--peer-key-file=" + filepath.Join(testStateDir, "pki", "etcd-server.key"),
+		"--peer-trusted-ca-file=" + filepath.Join(testStateDir, "pki", "ca.crt"),
+		"--peer-client-cert-auth=true",
 	}
-	for _, id := range []config.ComponentID{config.ComponentCABPK, config.ComponentKCP, config.ComponentCAPD} {
+	for _, flag := range wantFlags {
+		if !strings.Contains(exec, flag) {
+			t.Errorf("capishim-etcd.container Exec missing %s; got %q", flag, exec)
+		}
+	}
+}
+
+func TestRenderAPIServerExec(t *testing.T) {
+	t.Parallel()
+	units := renderWith(t, testVersion, testBind)
+	exec := unitValue(t, units["capishim-apiserver.container"], "Exec")
+	wantFlags := []string{
+		"kube-apiserver --etcd-servers=https://127.0.0.1:2379",
+		"--etcd-cafile=" + filepath.Join(testStateDir, "pki", "ca.crt"),
+		"--etcd-certfile=" + filepath.Join(testStateDir, "pki", "apiserver-client.crt"),
+		"--etcd-keyfile=" + filepath.Join(testStateDir, "pki", "apiserver-client.key"),
+		"--client-ca-file=" + filepath.Join(testStateDir, "pki", "ca.crt"),
+		"--tls-cert-file=" + filepath.Join(testStateDir, "pki", "apiserver.crt"),
+		"--tls-private-key-file=" + filepath.Join(testStateDir, "pki", "apiserver.key"),
+		"--service-account-key-file=" + filepath.Join(testStateDir, "pki", "sa.pub"),
+		"--service-account-signing-key-file=" + filepath.Join(testStateDir, "pki", "sa.key"),
+		"--service-account-issuer=https://127.0.0.1:6443",
+		"--authorization-mode=ABAC,RBAC",
+		"--authorization-policy-file=" + filepath.Join(testStateDir, "abac", "policy.json"),
+		"--bind-address=0.0.0.0",
+		"--secure-port=6443",
+		"--service-cluster-ip-range=10.128.0.0/12",
+		"--allow-privileged=true",
+	}
+	for _, flag := range wantFlags {
+		if !strings.Contains(exec, flag) {
+			t.Errorf("capishim-apiserver.container Exec missing %s; got %q", flag, exec)
+		}
+	}
+}
+
+func TestRenderUser(t *testing.T) {
+	t.Parallel()
+	units := renderWith(t, testVersion, testBind)
+	// The capishim-built images (pki, setup, managers) are distroless and run
+	// as uid 65532 by default, which cannot write a host-owned state dir under
+	// rootless podman; the proven driver forces User=0.
+	for _, id := range []config.ComponentID{
+		config.ComponentPKI,
+		config.ComponentSetup,
+		config.ComponentCore,
+		config.ComponentCABPK,
+		config.ComponentKCP,
+		config.ComponentCAPD,
+	} {
 		name := "capishim-" + string(id) + ".container"
-		if cmd := unitValue(t, units[name], "Command"); strings.Contains(cmd, "--feature-gates") {
-			t.Errorf("%s Command carries --feature-gates, want core-only (REQ-006):\n%s", name, cmd)
+		if got := unitValue(t, units[name], "User"); got != "0" {
+			t.Errorf("%s User = %q, want %q (distroless nonroot cannot write the host state dir)", name, got, "0")
 		}
 	}
 }
@@ -390,11 +517,16 @@ func TestRenderEnvironment(t *testing.T) {
 
 	// The capishim-built containers consume configuration via config.Load(env):
 	// pki needs the state dir, setup needs the state dir and the bind address
-	// (REQ-010). Manager flags travel in Command= instead, asserted by
-	// TestRenderManagerCommand.
+	// (REQ-010). Manager flags travel in Exec= instead, asserted by
+	// TestRenderManagerExec.
 	wantIn("capishim-pki.container", config.EnvStateDir+"="+testStateDir)
 	wantIn("capishim-setup.container", config.EnvStateDir+"="+testStateDir)
 	wantIn("capishim-setup.container", config.EnvBindAddress+"="+testBind)
+	// The CAPD in-memory backend mux host comes from POD_IP and becomes the
+	// workload ControlPlaneEndpoint host and <cluster>-kubeconfig server
+	// (REQ-008). All managers share the pod network namespace, so loopback is
+	// reachable.
+	wantIn("capishim-capd.container", "POD_IP=127.0.0.1")
 }
 
 func TestRenderDeterministic(t *testing.T) {
