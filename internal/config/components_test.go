@@ -49,53 +49,63 @@ func TestComponentsUniqueIDs(t *testing.T) {
 func TestComponentSpecTable(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		id                config.ComponentID
-		wantImage         string
-		wantWebhookPort   int
-		wantNamespace     string
-		wantNamePrefix    string
-		wantManagerCN     string
-		wantKubeconfigRel string
+		id                  config.ComponentID
+		wantImage           string
+		wantWebhookPort     int
+		wantHealthPort      int
+		wantDiagnosticsPort int
+		wantNamespace       string
+		wantNamePrefix      string
+		wantManagerCN       string
+		wantKubeconfigRel   string
 	}{
 		{id: config.ComponentPKI, wantImage: "localhost/capishim-setup:v0.1.0"},
 		{id: config.ComponentEtcd, wantImage: "registry.k8s.io/etcd:3.5.17-0"},
 		{id: config.ComponentAPIServer, wantImage: "registry.k8s.io/kube-apiserver:v1.36.1"},
 		{id: config.ComponentSetup, wantImage: "localhost/capishim-setup:v0.1.0"},
 		{
-			id:                config.ComponentCore,
-			wantImage:         "localhost/capishim-core:v0.1.0",
-			wantWebhookPort:   9443,
-			wantNamespace:     "capi-system",
-			wantNamePrefix:    "capi-",
-			wantManagerCN:     "capishim:core-manager",
-			wantKubeconfigRel: "kubeconfigs/core.kubeconfig",
+			id:                  config.ComponentCore,
+			wantImage:           "localhost/capishim-core:v0.1.0",
+			wantWebhookPort:     9443,
+			wantHealthPort:      9451,
+			wantDiagnosticsPort: 8451,
+			wantNamespace:       "capi-system",
+			wantNamePrefix:      "capi-",
+			wantManagerCN:       "capishim:core-manager",
+			wantKubeconfigRel:   "kubeconfigs/core.kubeconfig",
 		},
 		{
-			id:                config.ComponentCABPK,
-			wantImage:         "localhost/capishim-cabpk:v0.1.0",
-			wantWebhookPort:   9444,
-			wantNamespace:     "capi-kubeadm-bootstrap-system",
-			wantNamePrefix:    "capi-kubeadm-bootstrap-",
-			wantManagerCN:     "capishim:cabpk-manager",
-			wantKubeconfigRel: "kubeconfigs/cabpk.kubeconfig",
+			id:                  config.ComponentCABPK,
+			wantImage:           "localhost/capishim-cabpk:v0.1.0",
+			wantWebhookPort:     9444,
+			wantHealthPort:      9452,
+			wantDiagnosticsPort: 8452,
+			wantNamespace:       "capi-kubeadm-bootstrap-system",
+			wantNamePrefix:      "capi-kubeadm-bootstrap-",
+			wantManagerCN:       "capishim:cabpk-manager",
+			wantKubeconfigRel:   "kubeconfigs/cabpk.kubeconfig",
 		},
 		{
-			id:                config.ComponentKCP,
-			wantImage:         "localhost/capishim-kcp:v0.1.0",
-			wantWebhookPort:   9445,
-			wantNamespace:     "capi-kubeadm-control-plane-system",
-			wantNamePrefix:    "capi-kubeadm-control-plane-",
-			wantManagerCN:     "capishim:kcp-manager",
-			wantKubeconfigRel: "kubeconfigs/kcp.kubeconfig",
+			id:                  config.ComponentKCP,
+			wantImage:           "localhost/capishim-kcp:v0.1.0",
+			wantWebhookPort:     9445,
+			wantHealthPort:      9453,
+			wantDiagnosticsPort: 8453,
+			wantNamespace:       "capi-kubeadm-control-plane-system",
+			wantNamePrefix:      "capi-kubeadm-control-plane-",
+			wantManagerCN:       "capishim:kcp-manager",
+			wantKubeconfigRel:   "kubeconfigs/kcp.kubeconfig",
 		},
 		{
-			id:                config.ComponentCAPD,
-			wantImage:         "localhost/capishim-capd:v0.1.0",
-			wantWebhookPort:   9446,
-			wantNamespace:     "capd-system",
-			wantNamePrefix:    "capd-",
-			wantManagerCN:     "capishim:capd-manager",
-			wantKubeconfigRel: "kubeconfigs/capd.kubeconfig",
+			id:                  config.ComponentCAPD,
+			wantImage:           "localhost/capishim-capd:v0.1.0",
+			wantWebhookPort:     9446,
+			wantHealthPort:      9454,
+			wantDiagnosticsPort: 8454,
+			wantNamespace:       "capd-system",
+			wantNamePrefix:      "capd-",
+			wantManagerCN:       "capishim:capd-manager",
+			wantKubeconfigRel:   "kubeconfigs/capd.kubeconfig",
 		},
 	}
 	for _, tt := range tests {
@@ -113,6 +123,12 @@ func TestComponentSpecTable(t *testing.T) {
 			}
 			if spec.WebhookPort != tt.wantWebhookPort {
 				t.Errorf("spec.WebhookPort = %d, want %d", spec.WebhookPort, tt.wantWebhookPort)
+			}
+			if spec.HealthPort != tt.wantHealthPort {
+				t.Errorf("spec.HealthPort = %d, want %d", spec.HealthPort, tt.wantHealthPort)
+			}
+			if spec.DiagnosticsPort != tt.wantDiagnosticsPort {
+				t.Errorf("spec.DiagnosticsPort = %d, want %d", spec.DiagnosticsPort, tt.wantDiagnosticsPort)
 			}
 			if spec.ProviderNamespace != tt.wantNamespace {
 				t.Errorf("spec.ProviderNamespace = %q, want %q", spec.ProviderNamespace, tt.wantNamespace)

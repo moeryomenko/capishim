@@ -28,11 +28,21 @@ const (
 	webhookPortCABPK = 9444
 	webhookPortKCP   = 9445
 	webhookPortCAPD  = 9446
+
+	// Health and diagnostics listener ports for the four provider managers.
+	healthPortCore       = 9451
+	diagnosticsPortCore  = 8451
+	healthPortCABPK      = 9452
+	diagnosticsPortCABPK = 8452
+	healthPortKCP        = 9453
+	diagnosticsPortKCP   = 8453
+	healthPortCAPD       = 9454
+	diagnosticsPortCAPD  = 8454
 )
 
 // ComponentSpec describes one container of the shim pod: its image, and for
-// the four provider managers the webhook port, namespace, name prefix,
-// manager certificate CN, and kubeconfig path.
+// the four provider managers the webhook, health, and diagnostics ports,
+// namespace, name prefix, manager certificate CN, and kubeconfig path.
 type ComponentSpec struct {
 	// ID is the component identifier, one of the Component* constants.
 	ID ComponentID
@@ -41,6 +51,12 @@ type ComponentSpec struct {
 	// WebhookPort is the manager webhook listener port; zero for components
 	// without a webhook.
 	WebhookPort int
+	// HealthPort is the manager health probe listener port; zero for
+	// components without a health endpoint.
+	HealthPort int
+	// DiagnosticsPort is the manager diagnostics/metrics listener port; zero
+	// for components without a diagnostics endpoint.
+	DiagnosticsPort int
 	// ProviderNamespace is the namespace the provider managers run in.
 	ProviderNamespace string
 	// NamePrefix prefixes provider-managed object names.
@@ -65,6 +81,8 @@ func Components() []ComponentSpec {
 			ID:                ComponentCore,
 			Image:             "localhost/capishim-core:v0.1.0",
 			WebhookPort:       webhookPortCore,
+			HealthPort:        healthPortCore,
+			DiagnosticsPort:   diagnosticsPortCore,
 			ProviderNamespace: "capi-system",
 			NamePrefix:        "capi-",
 			ManagerCN:         "capishim:core-manager",
@@ -74,6 +92,8 @@ func Components() []ComponentSpec {
 			ID:                ComponentCABPK,
 			Image:             "localhost/capishim-cabpk:v0.1.0",
 			WebhookPort:       webhookPortCABPK,
+			HealthPort:        healthPortCABPK,
+			DiagnosticsPort:   diagnosticsPortCABPK,
 			ProviderNamespace: "capi-kubeadm-bootstrap-system",
 			NamePrefix:        "capi-kubeadm-bootstrap-",
 			ManagerCN:         "capishim:cabpk-manager",
@@ -83,6 +103,8 @@ func Components() []ComponentSpec {
 			ID:                ComponentKCP,
 			Image:             "localhost/capishim-kcp:v0.1.0",
 			WebhookPort:       webhookPortKCP,
+			HealthPort:        healthPortKCP,
+			DiagnosticsPort:   diagnosticsPortKCP,
 			ProviderNamespace: "capi-kubeadm-control-plane-system",
 			NamePrefix:        "capi-kubeadm-control-plane-",
 			ManagerCN:         "capishim:kcp-manager",
@@ -92,6 +114,8 @@ func Components() []ComponentSpec {
 			ID:                ComponentCAPD,
 			Image:             "localhost/capishim-capd:v0.1.0",
 			WebhookPort:       webhookPortCAPD,
+			HealthPort:        healthPortCAPD,
+			DiagnosticsPort:   diagnosticsPortCAPD,
 			ProviderNamespace: "capd-system",
 			NamePrefix:        "capd-",
 			ManagerCN:         "capishim:capd-manager",
