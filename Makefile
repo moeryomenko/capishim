@@ -83,7 +83,10 @@ images: ## Build all seven container images (providers from pinned tag)
 
 .PHONY: install-quadlet
 install-quadlet: ## Render and install quadlet units into the systemd user dir
-	@echo "not implemented yet" && exit 1
+	@CAPISHIM_VERSION="$(CAPISHIM_VERSION)" \
+		CAPISHIM_STATE_DIR="$(CAPISHIM_STATE_DIR)" \
+		CAPISHIM_BIND_ADDRESS="$(CAPISHIM_BIND_ADDRESS)" \
+		hack/install-quadlet.sh
 
 .PHONY: vendor-templates
 vendor-templates: ## Re-vendor in-memory templates from the pinned upstream tag

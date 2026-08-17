@@ -36,9 +36,9 @@ func environMap() map[string]string {
 	return env
 }
 
-// run dispatches the capishim entrypoint: the pki, setup, and version
-// subcommands, plus the legacy -version flag. It returns the process exit
-// code.
+// run dispatches the capishim entrypoint: the pki, setup, render-quadlet, and
+// version subcommands, plus the legacy -version flag. It returns the process
+// exit code.
 func run(args []string, stdout, stderr io.Writer, env map[string]string) int {
 	if len(args) > 0 {
 		switch args[0] {
@@ -46,6 +46,8 @@ func run(args []string, stdout, stderr io.Writer, env map[string]string) int {
 			return runPKI(context.Background(), stdout, stderr, env)
 		case "setup":
 			return runSetup(context.Background(), stdout, stderr, env)
+		case "render-quadlet":
+			return runRenderQuadlet(stdout, stderr, env, args[1:])
 		case "version":
 			return runVersion(stdout)
 		}
