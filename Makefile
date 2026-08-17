@@ -94,15 +94,21 @@ vendor-templates: ## Re-vendor in-memory templates from the pinned upstream tag
 
 .PHONY: check-pins
 check-pins: ## Verify upstream pin consistency (go.mod, Containerfiles, provenance)
-	@echo "not implemented yet" && exit 1
+	@hack/check-pins.sh
 
 .PHONY: test-e2e-shim
 test-e2e-shim: ## Run the e2e suite against the quadlet pod management cluster
-	@echo "not implemented yet" && exit 1
+	@cd e2e && go test -count=1 -timeout 30m ./...
 
 .PHONY: verify-shim
-verify-shim: ## Run the full verification flow (VC-01..VC-08)
-	@echo "not implemented yet" && exit 1
+verify-shim: ## Run the full verification flow (VC-01..VC-10)
+	@echo "==> [verify-shim] VC-09: lint + vet + unit tests (make check)"
+	@$(MAKE) check
+	@echo "==> [verify-shim] VC-10: upstream pin consistency (make check-pins)"
+	@$(MAKE) check-pins
+	@echo "==> [verify-shim] VC-01..VC-08: e2e suite against the capishim pod (make test-e2e-shim)"
+	@$(MAKE) test-e2e-shim
+	@echo "==> [verify-shim] PASS: VC-01..VC-10 all green"
 
 .PHONY: check
 check: lint vet test ## Run lint, vet, and tests (CI gate)
@@ -115,5 +121,5 @@ help: ## Print this help message
 	@grep -F -h '##' $(MAKEFILE_LIST) \
 		| grep -F -v fgrep \
 		| sort \
-		| grep -E '^[a-zA-Z_-]+:.*?## .*$$' \
+		| grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
