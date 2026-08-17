@@ -19,7 +19,11 @@
 //     "Requires=/After=" as the mechanism). pki is the root and orders after
 //     no sibling.
 //   - pki and setup are oneshot containers: their units carry a [Service]
-//     section with Type=oneshot and RemainAfterExit=yes (plan assumption 3).
+//     section with Type=oneshot and RemainAfterExit=yes (plan assumption 3)
+//     and an Exec= line dispatching the entrypoint subcommand — /capishim pki
+//     and /capishim setup respectively (amended after TASK-021: a oneshot
+//     unit without Exec= starts the entrypoint with no subcommand, which
+//     exits 0 doing nothing and breaks VC-01 via the systemd path).
 //   - The pod publishes the apiserver: PublishPort=<bind address>:6443, i.e.
 //     CAPISHIM_BIND_ADDRESS overrides the host part and the container port
 //     stays fixed at 6443 (REQ-010).
@@ -276,6 +280,33 @@ func TestRenderOneshotUnits(t *testing.T) {
 		if strings.Contains(units[name], "Type=oneshot") {
 			t.Errorf("%s must not be a oneshot unit:\n%s", name, units[name])
 		}
+	}
+}
+
+func TestRenderOneshotExec(t *testing.T) {
+	t.Parallel()
+	units := renderWith(t, testVersion, testBind)
+	// TASK-021 defect: the rendered pki and setup units carried no Exec= line,
+	// so `systemctl --user start capishim-pod` ran them as no-ops — the
+	// entrypoint exits 0 without a subcommand (cmd/capishim/main.go) — and
+	// VC-01 failed via the systemd path. The oneshot units must dispatch
+	// their subcommand through Exec= exactly as the proven e2e driver does
+	// (e2e/shim/components.go passes "pki" and "setup" explicitly).
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "capishim-pki.container", want: "/capishim pki"},
+		{name: "capishim-setup.container", want: "/capishim setup"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			exec := unitValue(t, units[tt.name], "Exec")
+			if exec != tt.want {
+				t.Errorf("%s Exec = %q, want %q", tt.name, exec, tt.want)
+			}
+		})
 	}
 }
 

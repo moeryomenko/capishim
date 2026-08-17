@@ -10,6 +10,7 @@ Volume={{ .StateDir }}/kubeconfigs:{{ .StateDir }}/kubeconfigs:rw
 Environment={{ .EnvStateDir }}={{ .StateDir }}
 Environment={{ .EnvBindAddr }}={{ .BindAddress }}
 User=0
+Exec={{ .Exec }}
 [Service]
 Type=oneshot
 RemainAfterExit=yes

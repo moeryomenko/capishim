@@ -152,8 +152,10 @@ func unitFileName(id config.ComponentID) string {
 }
 
 // unitDataFor builds the template data for one component: the rewritten image
-// reference, the volume mount roots, and for the etcd, apiserver, and manager
-// components the Exec command line.
+// reference, the volume mount roots, and the Exec command line. Every
+// component carries an Exec: etcd and apiserver run their binaries, managers
+// run the provider binaries, and the pki/setup oneshot containers dispatch
+// their entrypoint subcommand (/capishim pki and /capishim setup).
 func unitDataFor(spec config.ComponentSpec, in Input) templateData {
 	data := templateData{
 		Image:       imageFor(spec.Image, in.Version),
@@ -169,8 +171,10 @@ func unitDataFor(spec config.ComponentSpec, in Input) templateData {
 		data.Exec = apiserverExec(in.Config.StateDir)
 	case config.ComponentCore, config.ComponentCABPK, config.ComponentKCP, config.ComponentCAPD:
 		data.Exec = managerExec(spec, in.Config.StateDir)
-	case config.ComponentPKI, config.ComponentSetup:
-		// Oneshot containers carry no Exec line.
+	case config.ComponentPKI:
+		data.Exec = "/capishim pki"
+	case config.ComponentSetup:
+		data.Exec = "/capishim setup"
 	}
 	return data
 }

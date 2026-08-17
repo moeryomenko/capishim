@@ -4,6 +4,7 @@ Image={{ .Image }}
 Volume={{ .StateDir }}/pki:{{ .StateDir }}/pki:rw
 Environment={{ .EnvStateDir }}={{ .StateDir }}
 User=0
+Exec={{ .Exec }}
 [Service]
 Type=oneshot
 RemainAfterExit=yes
