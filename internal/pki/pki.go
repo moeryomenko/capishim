@@ -177,18 +177,54 @@ func Generate(ctx context.Context, cfg Config) (*Inventory, error) {
 	apiserverDNS, apiserverIPs := apiserverSANs(host)
 
 	leaves := []leafSpec{
-		{artifact: inv.EtcdServer, commonName: "etcd-server", usages: serverAuth, dnsNames: loopbackDNS, ipAddresses: loopbackIPs},
+		{
+			artifact:    inv.EtcdServer,
+			commonName:  "etcd-server",
+			usages:      serverAuth,
+			dnsNames:    loopbackDNS,
+			ipAddresses: loopbackIPs,
+		},
 		{artifact: inv.EtcdClient, commonName: "etcd-client", usages: clientAuth},
-		{artifact: inv.APIServer, commonName: "capishim-apiserver", usages: serverAuth, dnsNames: apiserverDNS, ipAddresses: apiserverIPs},
+		{
+			artifact:    inv.APIServer,
+			commonName:  "capishim-apiserver",
+			usages:      serverAuth,
+			dnsNames:    apiserverDNS,
+			ipAddresses: apiserverIPs,
+		},
 		{artifact: inv.APIServerClient, commonName: "capishim:apiserver-client", usages: clientAuth},
 		{artifact: inv.CoreManager, commonName: "capishim:core-manager", usages: clientAuth},
 		{artifact: inv.CABPKManager, commonName: "capishim:cabpk-manager", usages: clientAuth},
 		{artifact: inv.KCPManager, commonName: "capishim:kcp-manager", usages: clientAuth},
 		{artifact: inv.CAPDManager, commonName: "capishim:capd-manager", usages: clientAuth},
-		{artifact: inv.CoreWebhook, commonName: "capishim:core-webhook", usages: serverAuth, dnsNames: loopbackDNS, ipAddresses: loopbackIPs},
-		{artifact: inv.CABPKWebhook, commonName: "capishim:cabpk-webhook", usages: serverAuth, dnsNames: loopbackDNS, ipAddresses: loopbackIPs},
-		{artifact: inv.KCPWebhook, commonName: "capishim:kcp-webhook", usages: serverAuth, dnsNames: loopbackDNS, ipAddresses: loopbackIPs},
-		{artifact: inv.CAPDWebhook, commonName: "capishim:capd-webhook", usages: serverAuth, dnsNames: loopbackDNS, ipAddresses: loopbackIPs},
+		{
+			artifact:    inv.CoreWebhook,
+			commonName:  "capishim:core-webhook",
+			usages:      serverAuth,
+			dnsNames:    loopbackDNS,
+			ipAddresses: loopbackIPs,
+		},
+		{
+			artifact:    inv.CABPKWebhook,
+			commonName:  "capishim:cabpk-webhook",
+			usages:      serverAuth,
+			dnsNames:    loopbackDNS,
+			ipAddresses: loopbackIPs,
+		},
+		{
+			artifact:    inv.KCPWebhook,
+			commonName:  "capishim:kcp-webhook",
+			usages:      serverAuth,
+			dnsNames:    loopbackDNS,
+			ipAddresses: loopbackIPs,
+		},
+		{
+			artifact:    inv.CAPDWebhook,
+			commonName:  "capishim:capd-webhook",
+			usages:      serverAuth,
+			dnsNames:    loopbackDNS,
+			ipAddresses: loopbackIPs,
+		},
 		{artifact: inv.Admin, commonName: "capishim:admin", usages: clientAuth},
 	}
 	for _, spec := range leaves {
@@ -216,7 +252,11 @@ func newInventory(dir string) *Inventory {
 		}
 	}
 	webhook := func(comp string) Artifact {
-		return artifact(comp+"-webhook", filepath.Join(comp+"-webhook", webhookCertName), filepath.Join(comp+"-webhook", webhookKeyName))
+		return artifact(
+			comp+"-webhook",
+			filepath.Join(comp+"-webhook", webhookCertName),
+			filepath.Join(comp+"-webhook", webhookKeyName),
+		)
 	}
 	return &Inventory{
 		CA:              artifact("ca", caCertName, caKeyName),
@@ -421,7 +461,11 @@ func publicKeyCert(publicKey *rsa.PublicKey, signingKey *rsa.PrivateKey) (*x509.
 }
 
 // createCertificate signs a certificate template and parses the result.
-func createCertificate(tmpl, parent *x509.Certificate, publicKey crypto.PublicKey, signer crypto.Signer) (*x509.Certificate, error) {
+func createCertificate(
+	tmpl, parent *x509.Certificate,
+	publicKey crypto.PublicKey,
+	signer crypto.Signer,
+) (*x509.Certificate, error) {
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, publicKey, signer)
 	if err != nil {
 		return nil, fmt.Errorf("create certificate: %w", err)
