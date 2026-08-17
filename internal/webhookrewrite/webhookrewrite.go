@@ -43,7 +43,11 @@ const webhookURLPrefix = "https://localhost:"
 func RewriteClientConfig(cc *admissionv1.WebhookClientConfig, port int, caPEM []byte) error {
 	if cc.Service != nil {
 		if len(caPEM) == 0 {
-			return fmt.Errorf("webhookrewrite: cannot rewrite service %s/%s: pod CA is empty", cc.Service.Namespace, cc.Service.Name)
+			return fmt.Errorf(
+				"webhookrewrite: cannot rewrite service %s/%s: pod CA is empty",
+				cc.Service.Namespace,
+				cc.Service.Name,
+			)
 		}
 		u := webhookURLPrefix + strconv.Itoa(port)
 		if cc.Service.Path != nil && *cc.Service.Path != "" {
@@ -153,7 +157,11 @@ func RewriteAll(objs []runtime.Object, ports map[string]int, caPEM []byte) error
 
 // rewriteMutatingByNamespace rewrites a mutating webhook configuration,
 // resolving the port per webhook from its service namespace.
-func rewriteMutatingByNamespace(cfg *admissionv1.MutatingWebhookConfiguration, ports map[string]int, caPEM []byte) error {
+func rewriteMutatingByNamespace(
+	cfg *admissionv1.MutatingWebhookConfiguration,
+	ports map[string]int,
+	caPEM []byte,
+) error {
 	for i := range cfg.Webhooks {
 		cc := &cfg.Webhooks[i].ClientConfig
 		port, err := portForClientConfig(cc.Service, ports)
@@ -169,7 +177,11 @@ func rewriteMutatingByNamespace(cfg *admissionv1.MutatingWebhookConfiguration, p
 
 // rewriteValidatingByNamespace rewrites a validating webhook configuration,
 // resolving the port per webhook from its service namespace.
-func rewriteValidatingByNamespace(cfg *admissionv1.ValidatingWebhookConfiguration, ports map[string]int, caPEM []byte) error {
+func rewriteValidatingByNamespace(
+	cfg *admissionv1.ValidatingWebhookConfiguration,
+	ports map[string]int,
+	caPEM []byte,
+) error {
 	for i := range cfg.Webhooks {
 		cc := &cfg.Webhooks[i].ClientConfig
 		port, err := portForClientConfig(cc.Service, ports)

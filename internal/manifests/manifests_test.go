@@ -402,7 +402,8 @@ func TestApplyAllProviders(t *testing.T) {
 		"capi-manager-rolebinding": true, "capi-kubeadm-bootstrap-manager-rolebinding": true,
 		"capi-kubeadm-control-plane-manager-rolebinding": true, "capd-manager-rolebinding": true,
 	}
-	crbList, err := client.Resource(rbacv1.SchemeGroupVersion.WithResource("clusterrolebindings")).List(ctx, metav1.ListOptions{})
+	crbList, err := client.Resource(rbacv1.SchemeGroupVersion.WithResource("clusterrolebindings")).
+		List(ctx, metav1.ListOptions{})
 	if err != nil {
 		t.Fatalf("List(clusterrolebindings): %v", err)
 	}

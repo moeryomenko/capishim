@@ -159,7 +159,11 @@ func TestRewriteMutatingConfigServiceToURL(t *testing.T) {
 			{
 				Name: "default.clusterresourceset.addons.cluster.x-k8s.io",
 				ClientConfig: admissionv1.WebhookClientConfig{
-					Service: serviceRef("capi-system", "capi-webhook-service", "/mutate-addons-cluster-x-k8s-io-v1beta2-clusterresourceset"),
+					Service: serviceRef(
+						"capi-system",
+						"capi-webhook-service",
+						"/mutate-addons-cluster-x-k8s-io-v1beta2-clusterresourceset",
+					),
 				},
 			},
 		},
@@ -267,7 +271,11 @@ func TestRewriteAllProviderPortMapping(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "capd-mutating-webhook-configuration"},
 			Webhooks: []admissionv1.MutatingWebhook{
 				{Name: "default.dockercluster.infrastructure.cluster.x-k8s.io", ClientConfig: admissionv1.WebhookClientConfig{
-					Service: serviceRef("capd-system", "capd-webhook-service", "/mutate-infrastructure-cluster-x-k8s-io-v1beta2-dockercluster"),
+					Service: serviceRef(
+						"capd-system",
+						"capd-webhook-service",
+						"/mutate-infrastructure-cluster-x-k8s-io-v1beta2-dockercluster",
+					),
 				}},
 			},
 		},
@@ -432,7 +440,10 @@ func TestRewriteCRDConversionUntouched(t *testing.T) {
 	}{
 		{name: "nil conversion", conv: nil},
 		{name: "strategy none", conv: &apiextensionsv1.CustomResourceConversion{Strategy: apiextensionsv1.NoneConverter}},
-		{name: "strategy webhook nil webhook", conv: &apiextensionsv1.CustomResourceConversion{Strategy: apiextensionsv1.WebhookConverter}},
+		{
+			name: "strategy webhook nil webhook",
+			conv: &apiextensionsv1.CustomResourceConversion{Strategy: apiextensionsv1.WebhookConverter},
+		},
 		{name: "strategy webhook nil clientConfig", conv: &apiextensionsv1.CustomResourceConversion{
 			Strategy: apiextensionsv1.WebhookConverter,
 			Webhook:  &apiextensionsv1.WebhookConversion{},
@@ -481,7 +492,11 @@ func TestRewriteIdempotent(t *testing.T) {
 			{
 				Name: "default.clusterresourceset.addons.cluster.x-k8s.io",
 				ClientConfig: admissionv1.WebhookClientConfig{
-					Service: serviceRef("capi-system", "capi-webhook-service", "/mutate-addons-cluster-x-k8s-io-v1beta2-clusterresourceset"),
+					Service: serviceRef(
+						"capi-system",
+						"capi-webhook-service",
+						"/mutate-addons-cluster-x-k8s-io-v1beta2-clusterresourceset",
+					),
 				},
 			},
 		},
@@ -937,7 +952,8 @@ func collectConversionClientConfigs(objs []runtime.Object) []*apiextensionsv1.We
 		if !ok {
 			continue
 		}
-		if crd.Spec.Conversion != nil && crd.Spec.Conversion.Webhook != nil && crd.Spec.Conversion.Webhook.ClientConfig != nil {
+		if crd.Spec.Conversion != nil && crd.Spec.Conversion.Webhook != nil &&
+			crd.Spec.Conversion.Webhook.ClientConfig != nil {
 			out = append(out, crd.Spec.Conversion.Webhook.ClientConfig)
 		}
 	}

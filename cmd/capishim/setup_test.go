@@ -48,7 +48,11 @@ func TestManifestsDir(t *testing.T) {
 		{name: "default when unset", env: nil, want: "/templates/manifests"},
 		{name: "default when other keys set", env: map[string]string{"HOME": "/x"}, want: "/templates/manifests"},
 		{name: "override", env: map[string]string{capishim.EnvManifestsDir: "/srv/manifests"}, want: "/srv/manifests"},
-		{name: "override trimmed", env: map[string]string{capishim.EnvManifestsDir: " /srv/manifests "}, want: "/srv/manifests"},
+		{
+			name: "override trimmed",
+			env:  map[string]string{capishim.EnvManifestsDir: " /srv/manifests "},
+			want: "/srv/manifests",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
