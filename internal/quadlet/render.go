@@ -155,7 +155,8 @@ func unitFileName(id config.ComponentID) string {
 // reference, the volume mount roots, and the Exec command line. Every
 // component carries an Exec: etcd and apiserver run their binaries, managers
 // run the provider binaries, and the pki/setup oneshot containers dispatch
-// their entrypoint subcommand (/capishim pki and /capishim setup).
+// their entrypoint subcommand (pki and setup). Podman quadlet appends Exec=
+// to the image ENTRYPOINT, so the bare subcommand is all that is needed.
 func unitDataFor(spec config.ComponentSpec, in Input) templateData {
 	data := templateData{
 		Image:       imageFor(spec.Image, in.Version),
@@ -172,9 +173,9 @@ func unitDataFor(spec config.ComponentSpec, in Input) templateData {
 	case config.ComponentCore, config.ComponentCABPK, config.ComponentKCP, config.ComponentCAPD:
 		data.Exec = managerExec(spec, in.Config.StateDir)
 	case config.ComponentPKI:
-		data.Exec = "/capishim pki"
+		data.Exec = "pki"
 	case config.ComponentSetup:
-		data.Exec = "/capishim setup"
+		data.Exec = "setup"
 	}
 	return data
 }

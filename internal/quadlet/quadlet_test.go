@@ -20,10 +20,12 @@
 //     no sibling.
 //   - pki and setup are oneshot containers: their units carry a [Service]
 //     section with Type=oneshot and RemainAfterExit=yes (plan assumption 3)
-//     and an Exec= line dispatching the entrypoint subcommand — /capishim pki
-//     and /capishim setup respectively (amended after TASK-021: a oneshot
-//     unit without Exec= starts the entrypoint with no subcommand, which
-//     exits 0 doing nothing and breaks VC-01 via the systemd path).
+//     and an Exec= line dispatching the entrypoint subcommand — "pki" and
+//     "setup" respectively (podman quadlet appends Exec= to the image
+//     ENTRYPOINT ["/capishim"], so the bare subcommand reaches main.go's
+//     dispatch; amended after TASK-021: a oneshot unit without Exec= starts
+//     the entrypoint with no subcommand, which exits 0 doing nothing and
+//     breaks VC-01 via the systemd path).
 //   - The pod publishes the apiserver: PublishPort=<bind address>:6443, i.e.
 //     CAPISHIM_BIND_ADDRESS overrides the host part and the container port
 //     stays fixed at 6443 (REQ-010).
@@ -358,12 +360,24 @@ func TestRenderOneshotExec(t *testing.T) {
 	// VC-01 failed via the systemd path. The oneshot units must dispatch
 	// their subcommand through Exec= exactly as the proven e2e driver does
 	// (e2e/shim/components.go passes "pki" and "setup" explicitly).
+	//
+	// TASK-025 defect (TASK-025 red phase): podman quadlet appends Exec= to the
+	// image ENTRYPOINT rather than replacing it, so the Exec line must carry
+	// the subcommand alone. The capishim-setup image sets
+	// ENTRYPOINT ["/capishim"] (images/capishim-setup.Containerfile), so
+	// Exec=/capishim pki would run `/capishim /capishim pki`: the first
+	// argument "/capishim" matches no subcommand in cmd/capishim/main.go's
+	// switch, falls through to flag parsing, and exits 0 doing nothing. The
+	// rendered Exec must be exactly "pki" / "setup" (no leading slash, no
+	// binary path) so the entrypoint actually dispatches — the same mechanism
+	// the manager units rely on when they pass only flags and the /manager
+	// ENTRYPOINT supplies the binary.
 	tests := []struct {
 		name string
 		want string
 	}{
-		{name: "capishim-pki.container", want: "/capishim pki"},
-		{name: "capishim-setup.container", want: "/capishim setup"},
+		{name: "capishim-pki.container", want: "pki"},
+		{name: "capishim-setup.container", want: "setup"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
