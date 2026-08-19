@@ -2,7 +2,7 @@
 # hack/install-quadlet.sh — render the quadlet unit graph from the current
 # configuration and install it where systemd (user or system scope) reads
 # quadlet units, then prepare the host-side state for the shim (REQ-001,
-# REQ-007, REQ-010, REQ-011).
+# REQ-004, REQ-007, REQ-009, REQ-010, REQ-011).
 #
 # What it does:
 #   1. Builds the capishim binary and renders the nine quadlet units
@@ -17,6 +17,8 @@
 #      `clusterctl generate cluster --from` (REQ-007).
 #   6. Symlinks ~/.kube/capishim.kubeconfig to the admin kubeconfig the setup
 #      container writes at boot (REQ-010).
+#   7. Creates the state subdirectories the containers bind-mount and writes
+#      the bootstrap ABAC policy the apiserver loads (REQ-004, REQ-009).
 #
 # Env overrides:
 #   CAPISHIM_SYSTEM        install into /etc/containers/systemd/ (requires root)
@@ -228,6 +230,36 @@ install_kubeconfig_symlink() {
 }
 
 # ---------------------------------------------------------------------------
+# prepare_state_dirs — create the state subdirectories the quadlet containers
+# bind-mount and write the bootstrap ABAC policy the apiserver loads, so a
+# clean host that runs only `make install-quadlet` boots without the state
+# prep the e2e shim performs (REQ-004, REQ-009, VC-01)
+# ---------------------------------------------------------------------------
+prepare_state_dirs() {
+  local -a dirs=(
+    "${CAPISHIM_STATE_DIR}/pki"
+    "${CAPISHIM_STATE_DIR}/etcd"
+    "${CAPISHIM_STATE_DIR}/kubeconfigs"
+    "${CAPISHIM_STATE_DIR}/abac"
+    "${CAPISHIM_STATE_DIR}/pki/core-webhook"
+    "${CAPISHIM_STATE_DIR}/pki/cabpk-webhook"
+    "${CAPISHIM_STATE_DIR}/pki/kcp-webhook"
+    "${CAPISHIM_STATE_DIR}/pki/capd-webhook"
+  )
+  local dir
+  for dir in "${dirs[@]}"; do
+    mkdir -p -- "${dir}"
+  done
+  log_info "prepared state directories under ${CAPISHIM_STATE_DIR}"
+
+  local policy_path="${CAPISHIM_STATE_DIR}/abac/policy.json"
+  local policy='{"apiVersion":"abac.authorization.kubernetes.io/v1beta1","kind":"Policy","spec":{"user":"capishim:admin","namespace":"*","resource":"*","apiGroup":"*","nonResourcePath":"*"}}'
+  printf '%s\n' "${policy}" > "${policy_path}"
+  chmod 0644 -- "${policy_path}"
+  log_info "wrote ABAC policy ${policy_path}"
+}
+
+# ---------------------------------------------------------------------------
 # print_summary — next commands for the operator
 # ---------------------------------------------------------------------------
 print_summary() {
@@ -265,6 +297,7 @@ main() {
   enable_linger
   install_templates
   install_kubeconfig_symlink
+  prepare_state_dirs
   print_summary
 }
 
