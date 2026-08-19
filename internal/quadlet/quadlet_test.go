@@ -147,6 +147,26 @@ func unitContains(t *testing.T, unit, want string) {
 	}
 }
 
+// sectionOf returns the name of the unit section that contains the first
+// `key=` line, or "" when the key appears before any section header. It fails
+// the test when the key is absent.
+func sectionOf(t *testing.T, unit, key string) string {
+	t.Helper()
+	section := ""
+	for _, line := range strings.Split(unit, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = line
+			continue
+		}
+		if strings.HasPrefix(line, key+"=") {
+			return section
+		}
+	}
+	t.Fatalf("unit has no %s= lines\n---\n%s\n---", key, unit)
+	return ""
+}
+
 // wantUnitNames returns the nine unit filenames the renderer must produce.
 func wantUnitNames() map[string]bool {
 	want := map[string]bool{"capishim.pod": true}
@@ -224,6 +244,52 @@ func TestRenderPodPublishPortCustomBind(t *testing.T) {
 			units := renderWith(t, testVersion, tt.bind)
 			if got := unitValue(t, units["capishim.pod"], "PublishPort"); got != tt.want {
 				t.Errorf("PublishPort for bind %q = %q, want %q", tt.bind, got, tt.want)
+			}
+			// TASK-023: the pod must keep running when the pki oneshot exits,
+			// so ExitPolicy=continue is required for every bind variant too.
+			if got := unitValue(t, units["capishim.pod"], "ExitPolicy"); got != "continue" {
+				t.Errorf("ExitPolicy for bind %q = %q, want %q", tt.bind, got, "continue")
+			}
+		})
+	}
+}
+
+func TestRenderPodExitPolicyContinue(t *testing.T) {
+	t.Parallel()
+	// TASK-023 defect: podman quadlet defaults pod units to ExitPolicy=stop,
+	// so the pki oneshot container — the only container running while etcd
+	// waits on it — exiting ~90ms after start (certs already exist) tears the
+	// whole pod down and VC-01 fails via the systemd path: pod inactive
+	// (dead), admin.kubeconfig never created. The rendered pod unit must pin
+	// ExitPolicy=continue so oneshot exits do not stop the pod.
+	tests := []struct {
+		name string
+		bind string
+	}{
+		{"loopback IPv4", "127.0.0.1:6443"},
+		{"wildcard IPv4", "0.0.0.0:6443"},
+		{"loopback IPv6", "[::1]:6443"},
+		{"wildcard IPv6", "[::]:6443"},
+		{"custom host port", "127.0.0.1:8443"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			units := renderWith(t, testVersion, tt.bind)
+			pod := units["capishim.pod"]
+			unitContains(t, pod, "[Pod]")
+			// The directive must live in the [Pod] section, not a [Service]
+			// section: podman reads ExitPolicy from [Pod] only.
+			if got := sectionOf(t, pod, "ExitPolicy"); got != "[Pod]" {
+				t.Errorf("ExitPolicy= line is in section %q, want [Pod]\n---\n%s\n---", got, pod)
+			}
+			if got := unitValue(t, pod, "ExitPolicy"); got != "continue" {
+				t.Errorf("ExitPolicy = %q, want %q", got, "continue")
+			}
+			// Existing behavior preserved: the pod still publishes the
+			// apiserver port for this bind address.
+			if got := unitValue(t, pod, "PublishPort"); got != tt.bind+":6443" {
+				t.Errorf("PublishPort for bind %q = %q, want %q", tt.bind, got, tt.bind+":6443")
 			}
 		})
 	}
