@@ -97,6 +97,13 @@ const (
 	kindValidatingWebhookConfiguration = "ValidatingWebhookConfiguration"
 )
 
+// RBAC binding kinds excluded from the setup container's first apply
+// (REQ-004, VC-01).
+const (
+	kindClusterRoleBinding = "ClusterRoleBinding"
+	kindRoleBinding        = "RoleBinding"
+)
+
 // File and directory modes for generated artifacts.
 const (
 	kubeconfigFileMode os.FileMode = 0o600
@@ -162,14 +169,17 @@ func setup(ctx context.Context, env map[string]string) error {
 		return fmt.Errorf("build apiextensions client: %w", err)
 	}
 
-	// CRDs: apply the kept kinds from all four provider manifests and wait
-	// until every CAPI CRD reports Established (REQ-003).
+	// CRDs: apply the kept non-binding kinds from all four provider manifests
+	// and wait until every CAPI CRD reports Established (REQ-003). The RBAC
+	// bindings are deliberately excluded: the second apply creates them with
+	// the rewritten roleRef, and the apiserver rejects changing the roleRef
+	// of an existing binding ("cannot change roleRef") (REQ-004, VC-01).
 	loaded, err := manifests.Load(ProviderManifestFiles(manifestsRoot)...)
 	if err != nil {
 		return fmt.Errorf("load provider manifests: %w", err)
 	}
 	kept := keepObjects(loaded)
-	if err := manifests.Apply(ctx, dyn, kept); err != nil {
+	if err := manifests.Apply(ctx, dyn, WithoutRBACBindings(kept)); err != nil {
 		return fmt.Errorf("apply provider manifests: %w", err)
 	}
 	if err := manifests.WaitForCRDEstablished(ctx, apiext.ApiextensionsV1(), CRDNames(), crdWaitTimeout); err != nil {
@@ -487,6 +497,27 @@ func WaitForAPIServer(ctx context.Context, healthzURL, caPath, certPath, keyPath
 		}
 		return nil
 	}
+}
+
+// WithoutRBACBindings returns the subset of objs that are not RBAC bindings:
+// it keeps Namespace, CustomResourceDefinition, ClusterRole, Role,
+// MutatingWebhookConfiguration, and ValidatingWebhookConfiguration objects and
+// drops the ClusterRoleBinding and RoleBinding objects. The relative order and
+// content of the kept objects are preserved and the input is not mutated;
+// empty or nil input yields nil. The setup container's first apply uses this
+// so every binding is created only by the second apply, which carries the
+// rewritten roleRef and subjects: the apiserver rejects changing the roleRef
+// of an existing binding ("cannot change roleRef") (REQ-004, VC-01).
+func WithoutRBACBindings(objs []unstructured.Unstructured) []unstructured.Unstructured {
+	var kept []unstructured.Unstructured
+	for i := range objs {
+		switch objs[i].GetKind() {
+		case kindClusterRoleBinding, kindRoleBinding:
+			continue
+		}
+		kept = append(kept, objs[i])
+	}
+	return kept
 }
 
 // keepObjects returns the subset of objs the setup container applies

@@ -1,8 +1,9 @@
 // Package main_test exercises the testable helpers behind the capishim setup
 // subcommand: manifests-dir resolution, apiserver URL and timeout derivation,
-// the kubeconfig writer, the RBAC/webhook namespace maps, the CRD name list,
-// the unstructured-to-typed webhook conversion round trip against the
-// vendored provider manifests, and the apiserver readiness probe.
+// the kubeconfig writer, the first-apply RBAC binding filter, the
+// RBAC/webhook namespace maps, the CRD name list, the unstructured-to-typed
+// webhook conversion round trip against the vendored provider manifests, and
+// the apiserver readiness probe.
 package main_test
 
 import (
@@ -372,6 +373,188 @@ func TestWebhookRoundTripPreservesVendoredObjects(t *testing.T) {
 			t.Errorf("round trip changed %s; rewriting the webhook rewrite would corrupt the object", key)
 		}
 	}
+}
+
+// TestWithoutRBACBindings covers the first-apply filter behind the RBAC
+// double-apply fix (REQ-004, VC-01): the setup container's first apply must
+// not create the ClusterRoleBinding and RoleBinding objects, because the
+// second apply rewrites their roleRef and the apiserver rejects changing a
+// binding's roleRef once it exists ("cannot change roleRef"). The filter
+// returns only the non-binding kept objects, in input order, with unchanged
+// content, and must not mutate its input.
+func TestWithoutRBACBindings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		give []unstructured.Unstructured
+		want []unstructured.Unstructured
+	}{
+		{
+			name: "mixed kept kinds drop only the bindings",
+			give: []unstructured.Unstructured{
+				bindingTestObj("ClusterRoleBinding", "capi-manager-rolebinding", "", "capi-aggregated-manager-role"),
+				testObj("v1", "Namespace", "capi-system", ""),
+				bindingTestObj("RoleBinding", "capi-leader-election-rolebinding", "capi-system", "capi-leader-election-role"),
+				testObj("apiextensions.k8s.io/v1", "CustomResourceDefinition", "clusters.cluster.x-k8s.io", ""),
+				testObj("rbac.authorization.k8s.io/v1", "ClusterRole", "capi-manager-role", ""),
+				testObj("admissionregistration.k8s.io/v1", "MutatingWebhookConfiguration", "capi-webhook", ""),
+				testObj("rbac.authorization.k8s.io/v1", "Role", "capi-manager-role", "capi-system"),
+				testObj("admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration", "capi-webhook", ""),
+			},
+			want: []unstructured.Unstructured{
+				testObj("v1", "Namespace", "capi-system", ""),
+				testObj("apiextensions.k8s.io/v1", "CustomResourceDefinition", "clusters.cluster.x-k8s.io", ""),
+				testObj("rbac.authorization.k8s.io/v1", "ClusterRole", "capi-manager-role", ""),
+				testObj("admissionregistration.k8s.io/v1", "MutatingWebhookConfiguration", "capi-webhook", ""),
+				testObj("rbac.authorization.k8s.io/v1", "Role", "capi-manager-role", "capi-system"),
+				testObj("admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration", "capi-webhook", ""),
+			},
+		},
+		{name: "empty input", give: []unstructured.Unstructured{}, want: nil},
+		{name: "nil input", give: nil, want: nil},
+		{
+			name: "only bindings",
+			give: []unstructured.Unstructured{
+				bindingTestObj("ClusterRoleBinding", "capi-manager-rolebinding", "", "capi-aggregated-manager-role"),
+				bindingTestObj("RoleBinding", "capi-leader-election-rolebinding", "capi-system", "capi-leader-election-role"),
+			},
+			want: nil,
+		},
+		{
+			name: "no bindings passes everything through",
+			give: []unstructured.Unstructured{
+				testObj("v1", "Namespace", "capi-system", ""),
+				testObj("rbac.authorization.k8s.io/v1", "ClusterRole", "capi-manager-role", ""),
+				testObj("admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration", "capi-webhook", ""),
+			},
+			want: []unstructured.Unstructured{
+				testObj("v1", "Namespace", "capi-system", ""),
+				testObj("rbac.authorization.k8s.io/v1", "ClusterRole", "capi-manager-role", ""),
+				testObj("admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration", "capi-webhook", ""),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// Snapshot the input so the call is checked for mutation: the
+			// filter selects objects, it must not rewrite or reorder them.
+			snapshot, err := json.Marshal(tt.give)
+			if err != nil {
+				t.Fatalf("marshal input: %v", err)
+			}
+			got := capishim.WithoutRBACBindings(tt.give)
+			after, err := json.Marshal(tt.give)
+			if err != nil {
+				t.Fatalf("marshal input after call: %v", err)
+			}
+			if !bytes.Equal(snapshot, after) {
+				t.Errorf("WithoutRBACBindings mutated its input:\nbefore: %s\nafter:  %s", snapshot, after)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("WithoutRBACBindings returned %d objects, want %d", len(got), len(tt.want))
+			}
+			for i := range tt.want {
+				gotData, err := json.Marshal(got[i].Object)
+				if err != nil {
+					t.Fatalf("marshal result[%d]: %v", i, err)
+				}
+				wantData, err := json.Marshal(tt.want[i].Object)
+				if err != nil {
+					t.Fatalf("marshal want[%d]: %v", i, err)
+				}
+				if !bytes.Equal(gotData, wantData) {
+					t.Errorf("WithoutRBACBindings[%d] = %s, want %s", i, gotData, wantData)
+				}
+			}
+		})
+	}
+}
+
+// TestWithoutRBACBindingsOnVendoredManifests runs the first-apply filter over
+// the real kept provider objects and asserts the field-failure precondition:
+// no ClusterRoleBinding or RoleBinding may survive, so the second apply
+// creates every binding instead of updating it and the apiserver never sees a
+// roleRef change on a clean boot (REQ-004, VC-01).
+func TestWithoutRBACBindingsOnVendoredManifests(t *testing.T) {
+	t.Parallel()
+	kept := loadKept(t)
+	bindings := 0
+	for i := range kept {
+		switch kept[i].GetKind() {
+		case "ClusterRoleBinding", "RoleBinding":
+			bindings++
+		}
+	}
+	if bindings == 0 {
+		t.Fatal("vendored provider manifests contain no RBAC bindings; test would be vacuous")
+	}
+	got := capishim.WithoutRBACBindings(kept)
+	if len(got) != len(kept)-bindings {
+		t.Fatalf("WithoutRBACBindings kept %d of %d objects, want %d", len(got), len(kept), len(kept)-bindings)
+	}
+	i := 0
+	for j := range kept {
+		switch kept[j].GetKind() {
+		case "ClusterRoleBinding", "RoleBinding":
+			continue
+		}
+		gotData, err := json.Marshal(got[i].Object)
+		if err != nil {
+			t.Fatalf("marshal result[%d]: %v", i, err)
+		}
+		keptData, err := json.Marshal(kept[j].Object)
+		if err != nil {
+			t.Fatalf("marshal kept[%d]: %v", j, err)
+		}
+		if !bytes.Equal(gotData, keptData) {
+			t.Errorf("WithoutRBACBindings changed %s %q (order and content must be preserved)", kept[j].GetKind(), kept[j].GetName())
+		}
+		i++
+	}
+}
+
+// testObj builds a minimal unstructured object with the given identity for
+// the first-apply filter tests.
+func testObj(apiVersion, kind, name, namespace string) unstructured.Unstructured {
+	meta := map[string]interface{}{"name": name}
+	if namespace != "" {
+		meta["namespace"] = namespace
+	}
+	return unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": apiVersion,
+		"kind":       kind,
+		"metadata":   meta,
+	}}
+}
+
+// bindingTestObj builds a minimal unstructured ClusterRoleBinding or
+// RoleBinding with a roleRef and a ServiceAccount subject, the shape the
+// vendored provider manifests carry.
+func bindingTestObj(kind, name, namespace, roleName string) unstructured.Unstructured {
+	obj := testObj("rbac.authorization.k8s.io/v1", kind, name, namespace)
+	roleKind := "ClusterRole"
+	if kind == "RoleBinding" {
+		roleKind = "Role"
+	}
+	subjectNamespace := "capi-system"
+	if namespace != "" {
+		subjectNamespace = namespace
+	}
+	obj.Object["roleRef"] = map[string]interface{}{
+		"apiGroup": "rbac.authorization.k8s.io",
+		"kind":     roleKind,
+		"name":     roleName,
+	}
+	obj.Object["subjects"] = []interface{}{
+		map[string]interface{}{
+			"apiGroup":  "rbac.authorization.k8s.io",
+			"kind":      "ServiceAccount",
+			"name":      "capi-manager",
+			"namespace": subjectNamespace,
+		},
+	}
+	return obj
 }
 
 func TestWaitForAPIServerReady(t *testing.T) {
