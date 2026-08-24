@@ -211,12 +211,16 @@ func (p *ClusterProvider) apiserverPort() string {
 // ensureStateDirs creates the state subdirectories the containers mount and
 // the e2e driver writes (the pki container recreates <state>/pki itself, but
 // pre-creating every mount source keeps podman's bind-mount behavior uniform).
+// The external hypervisor manager's webhook-certs directory is pre-created too
+// (REQ-005): the CAPH quadlet mounts it as --webhook-cert-dir before first
+// boot, and no in-pod container creates it.
 func (p *ClusterProvider) ensureStateDirs() error {
 	dirs := []string{
 		filepath.Join(p.stateDir, "pki"),
 		filepath.Join(p.stateDir, "etcd"),
 		filepath.Join(p.stateDir, "kubeconfigs"),
 		filepath.Join(p.stateDir, "abac"),
+		filepath.Join(p.stateDir, "webhook-certs", "hypervisor"),
 	}
 	for _, c := range components(p.stateDir) {
 		if c.id == "apiserver" || c.id == "pki" || c.id == "setup" || c.id == "etcd" {
