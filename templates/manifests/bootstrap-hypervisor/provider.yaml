@@ -1,0 +1,1182 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: hypervisor-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: hypervisorclusters.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    kind: HypervisorCluster
+    listKind: HypervisorClusterList
+    plural: hypervisorclusters
+    singular: hypervisorcluster
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HypervisorCluster is the Schema for the hypervisorclusters API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HypervisorClusterSpec defines the desired state of HypervisorCluster.
+            properties:
+              clusterName:
+                description: ClusterName is the name of the Cluster this object belongs
+                  to.
+                type: string
+              network:
+                description: |-
+                  Network defines the cluster's host-side network stack: the bridge, the
+                  NAT table, and the static IP pool the Machine controllers allocate from.
+                properties:
+                  bridgeName:
+                    description: BridgeName is the Linux bridge the Machine TAPs attach
+                      to, e.g. "k8sbr0".
+                    type: string
+                  cidr:
+                    description: CIDR is the cluster subnet, e.g. "192.168.124.0/24".
+                    type: string
+                  dnsIP:
+                    description: DNSIP is the address the DNS forwarder listens on,
+                      e.g. "192.168.124.1".
+                    type: string
+                  gateway:
+                    description: Gateway is the address served on the bridge, e.g.
+                      "192.168.124.1".
+                    type: string
+                  natTable:
+                    description: NATTable is the nftables table used for NAT and forwarding
+                      rules, e.g. "k8slab".
+                    type: string
+                type: object
+            type: object
+          status:
+            description: HypervisorClusterStatus defines the observed state of HypervisorCluster.
+            properties:
+              conditions:
+                description: Conditions defines current service state of the HypervisorCluster.
+                items:
+                  description: Condition defines an observation of a Cluster API resource
+                    operational state.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed. If that is not known, then using the time when
+                        the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This field may be empty.
+                      maxLength: 10240
+                      minLength: 1
+                      type: string
+                    reason:
+                      description: |-
+                        reason is the reason for the condition's last transition in CamelCase.
+                        The specific API may choose whether or not this field is considered a guaranteed API.
+                        This field may be empty.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    severity:
+                      description: |-
+                        severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        understand the current situation and act accordingly.
+                        The Severity field MUST be set only when Status=False.
+                      maxLength: 32
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
+                        can be useful (see .node.status.conditions), the ability to deconflict is important.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - status
+                  - type
+                  type: object
+                type: array
+              controlPlaneEndpoint:
+                description: ControlPlaneEndpoint is the workload cluster's API server
+                  endpoint.
+                properties:
+                  host:
+                    description: host is the hostname on which the API server is serving.
+                    maxLength: 512
+                    type: string
+                  port:
+                    description: port is the port on which the API server is serving.
+                    format: int32
+                    type: integer
+                type: object
+              failureMessage:
+                description: FailureMessage is a human-readable message for the last
+                  failure.
+                type: string
+              failureReason:
+                description: FailureReason is a machine-readable reason for the last
+                  failure.
+                type: string
+              ready:
+                description: |-
+                  Ready indicates the host network stack is provisioned and the control
+                  plane endpoint is reachable.
+                type: boolean
+            required:
+            - ready
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: hypervisorconfigs.bootstrap.cluster.x-k8s.io
+spec:
+  group: bootstrap.cluster.x-k8s.io
+  names:
+    kind: HypervisorConfig
+    listKind: HypervisorConfigList
+    plural: hypervisorconfigs
+    singular: hypervisorconfig
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HypervisorConfig is the Schema for the hypervisorconfigs API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HypervisorConfigSpec defines the desired state of HypervisorConfig.
+            properties:
+              clusterName:
+                description: ClusterName is the name of the Cluster this object belongs
+                  to.
+                type: string
+              nodeName:
+                description: |-
+                  NodeName is the name of the node the bootstrap data is rendered for.
+                  Defaults to the owning Machine's name.
+                type: string
+              role:
+                description: |-
+                  Role is the node role the bootstrap data is rendered for, either
+                  "control-plane" or "worker". Defaults to the role derived from the
+                  owning Machine's labels.
+                type: string
+              sshPublicKey:
+                description: |-
+                  SSHPublicKey is an optional SSH public key added to the node's
+                  authorized_keys. When empty the cluster-level key is used.
+                type: string
+            required:
+            - clusterName
+            type: object
+          status:
+            description: HypervisorConfigStatus defines the observed state of HypervisorConfig.
+            properties:
+              conditions:
+                description: Conditions defines current service state of the HypervisorConfig.
+                items:
+                  description: Condition defines an observation of a Cluster API resource
+                    operational state.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed. If that is not known, then using the time when
+                        the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This field may be empty.
+                      maxLength: 10240
+                      minLength: 1
+                      type: string
+                    reason:
+                      description: |-
+                        reason is the reason for the condition's last transition in CamelCase.
+                        The specific API may choose whether or not this field is considered a guaranteed API.
+                        This field may be empty.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    severity:
+                      description: |-
+                        severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        understand the current situation and act accordingly.
+                        The Severity field MUST be set only when Status=False.
+                      maxLength: 32
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
+                        can be useful (see .node.status.conditions), the ability to deconflict is important.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - status
+                  - type
+                  type: object
+                type: array
+              dataSecretName:
+                description: |-
+                  DataSecretName is the name of the Secret that stores the rendered
+                  bootstrap data for the node.
+                type: string
+              failureMessage:
+                description: FailureMessage is a human-readable message for the last
+                  failure.
+                type: string
+              failureReason:
+                description: FailureReason is a machine-readable reason for the last
+                  failure.
+                type: string
+              ready:
+                description: Ready indicates the bootstrap data Secret has been rendered.
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: hypervisorcontrolplanes.controlplane.cluster.x-k8s.io
+spec:
+  group: controlplane.cluster.x-k8s.io
+  names:
+    kind: HypervisorControlPlane
+    listKind: HypervisorControlPlaneList
+    plural: hypervisorcontrolplanes
+    singular: hypervisorcontrolplane
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HypervisorControlPlane is the Schema for the hypervisorcontrolplanes
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              HypervisorControlPlaneSpec defines the desired state of
+              HypervisorControlPlane.
+            properties:
+              machineTemplate:
+                description: |-
+                  MachineTemplate contains information about how the control-plane
+                  Machines should be shaped when creating or updating the control plane.
+                properties:
+                  infrastructureRef:
+                    description: |-
+                      InfrastructureRef is a required reference to a custom resource offered
+                      by an infrastructure provider, here a HypervisorMachineTemplate.
+                    properties:
+                      apiVersion:
+                        description: API version of the referent.
+                        type: string
+                      fieldPath:
+                        description: |-
+                          If referring to a piece of an object instead of an entire object, this string
+                          should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                          For example, if the object reference is to a container within a pod, this would take on a value like:
+                          "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                          the event) or if no container name is specified "spec.containers[2]" (container with
+                          index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                          referencing a part of an object.
+                        type: string
+                      kind:
+                        description: |-
+                          Kind of the referent.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                        type: string
+                      name:
+                        description: |-
+                          Name of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                        type: string
+                      resourceVersion:
+                        description: |-
+                          Specific resourceVersion to which this reference is made, if any.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                        type: string
+                      uid:
+                        description: |-
+                          UID of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  metadata:
+                    description: |-
+                      Metadata is the standard object's metadata of the machines created from
+                      this template.
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          annotations is an unstructured key value map stored with a resource that may be
+                          set by external tools to store and retrieve arbitrary metadata. They are not
+                          queryable and should be preserved when modifying objects.
+                          More info: http://kubernetes.io/docs/user-guide/annotations
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          labels is a map of string keys and values that can be used to organize and categorize
+                          (scope and select) objects. May match selectors of replication controllers
+                          and services.
+                          More info: http://kubernetes.io/docs/user-guide/labels
+                        type: object
+                    type: object
+                required:
+                - infrastructureRef
+                type: object
+              replicas:
+                description: Replicas is the number of desired control-plane machines.
+                  Defaults to 1.
+                format: int32
+                type: integer
+              version:
+                description: |-
+                  Version is the desired Kubernetes version for the control plane. It is
+                  informational and matches the k8labs version pins.
+                type: string
+            required:
+            - machineTemplate
+            type: object
+          status:
+            description: |-
+              HypervisorControlPlaneStatus defines the observed state of
+              HypervisorControlPlane.
+            properties:
+              conditions:
+                description: Conditions defines current service state of the HypervisorControlPlane.
+                items:
+                  description: Condition defines an observation of a Cluster API resource
+                    operational state.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed. If that is not known, then using the time when
+                        the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This field may be empty.
+                      maxLength: 10240
+                      minLength: 1
+                      type: string
+                    reason:
+                      description: |-
+                        reason is the reason for the condition's last transition in CamelCase.
+                        The specific API may choose whether or not this field is considered a guaranteed API.
+                        This field may be empty.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    severity:
+                      description: |-
+                        severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        understand the current situation and act accordingly.
+                        The Severity field MUST be set only when Status=False.
+                      maxLength: 32
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
+                        can be useful (see .node.status.conditions), the ability to deconflict is important.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - status
+                  - type
+                  type: object
+                type: array
+              failureMessage:
+                description: |-
+                  FailureMessage indicates that there is a terminal problem reconciling
+                  the state, and will be set to a descriptive error message.
+                type: string
+              failureReason:
+                description: |-
+                  FailureReason indicates that there is a terminal problem reconciling the
+                  state, and will be set to a token value suitable for programmatic
+                  interpretation.
+                type: string
+              initialized:
+                description: |-
+                  Initialized denotes that the HypervisorControlPlane API Server is
+                  initialized and thus it can accept requests.
+                  NOTE: this field is part of the Cluster API contract and it is used to
+                  orchestrate provisioning.
+                type: boolean
+              ready:
+                description: |-
+                  Ready denotes that the HypervisorControlPlane API Server became ready
+                  during initial provisioning to receive requests.
+                  NOTE: this field is part of the Cluster API contract and it is used to
+                  orchestrate provisioning.
+                type: boolean
+              readyReplicas:
+                description: |-
+                  ReadyReplicas is the total number of fully running and ready control
+                  plane machines.
+                format: int32
+                type: integer
+              replicas:
+                description: |-
+                  Replicas is the total number of non-terminated machines targeted by
+                  this control plane (their labels match the selector).
+                format: int32
+                type: integer
+              selector:
+                description: |-
+                  Selector is the label selector in string format to avoid introspection
+                  by clients, and is used to provide the CRD-based integration for the
+                  scale subresource and additional integrations for things like kubectl
+                  describe. The string will be in the same format as the query-param
+                  syntax.
+                  More info about label selectors:
+                  http://kubernetes.io/docs/user-guide/labels#label-selectors
+                type: string
+              unavailableReplicas:
+                description: |-
+                  UnavailableReplicas is the total number of unavailable machines targeted
+                  by this control plane. This is the total number of machines that are
+                  still required for the deployment to have 100% available capacity. They
+                  may either be machines that are running but not yet ready or machines
+                  that still have not been created.
+                format: int32
+                type: integer
+              updatedReplicas:
+                description: |-
+                  UpdatedReplicas is the total number of non-terminated machines targeted
+                  by this control plane that have the desired template spec.
+                format: int32
+                type: integer
+              version:
+                description: |-
+                  Version represents the minimum Kubernetes version for the control plane
+                  machines in the cluster.
+                type: string
+            required:
+            - initialized
+            - ready
+            - readyReplicas
+            - replicas
+            - unavailableReplicas
+            - updatedReplicas
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: hypervisormachines.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    kind: HypervisorMachine
+    listKind: HypervisorMachineList
+    plural: hypervisormachines
+    singular: hypervisormachine
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HypervisorMachine is the Schema for the hypervisormachines API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HypervisorMachineSpec defines the desired state of HypervisorMachine.
+            properties:
+              clusterName:
+                description: ClusterName is the name of the Cluster this object belongs
+                  to.
+                type: string
+              cpu:
+                description: CPU is the number of vCPUs allocated to the VM.
+                format: int32
+                type: integer
+              disk:
+                description: Disk is the root disk size in MiB.
+                format: int32
+                type: integer
+              mac:
+                description: |-
+                  MAC is an optional override for the VM MAC address. When empty the
+                  controller derives the address from a stable hash of cluster/machine
+                  name.
+                type: string
+              ram:
+                description: RAM is the VM memory in MiB.
+                format: int32
+                type: integer
+              retainDiskOnDelete:
+                description: |-
+                  RetainDiskOnDelete determines whether the root disk survives VM
+                  deletion. Defaults to false: the disk is removed with the VM.
+                type: boolean
+            type: object
+          status:
+            description: HypervisorMachineStatus defines the observed state of HypervisorMachine.
+            properties:
+              addresses:
+                description: |-
+                  Addresses is the list of addresses for the VM: the allocated static IP
+                  and the machine hostname.
+                items:
+                  description: MachineAddress contains information for the node's
+                    address.
+                  properties:
+                    address:
+                      description: address is the machine address.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    type:
+                      description: type is the machine address type, one of Hostname,
+                        ExternalIP, InternalIP, ExternalDNS or InternalDNS.
+                      enum:
+                      - Hostname
+                      - ExternalIP
+                      - InternalIP
+                      - ExternalDNS
+                      - InternalDNS
+                      type: string
+                  required:
+                  - address
+                  - type
+                  type: object
+                type: array
+              conditions:
+                description: Conditions defines current service state of the HypervisorMachine.
+                items:
+                  description: Condition defines an observation of a Cluster API resource
+                    operational state.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed. If that is not known, then using the time when
+                        the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This field may be empty.
+                      maxLength: 10240
+                      minLength: 1
+                      type: string
+                    reason:
+                      description: |-
+                        reason is the reason for the condition's last transition in CamelCase.
+                        The specific API may choose whether or not this field is considered a guaranteed API.
+                        This field may be empty.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    severity:
+                      description: |-
+                        severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        understand the current situation and act accordingly.
+                        The Severity field MUST be set only when Status=False.
+                      maxLength: 32
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
+                        can be useful (see .node.status.conditions), the ability to deconflict is important.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - status
+                  - type
+                  type: object
+                type: array
+              failureMessage:
+                description: FailureMessage is a human-readable message for the last
+                  failure.
+                type: string
+              failureReason:
+                description: FailureReason is a machine-readable reason for the last
+                  failure.
+                type: string
+              providerID:
+                description: |-
+                  ProviderID is the infrastructure provider ID in the form
+                  hypervisor://<cluster>/<machine>.
+                type: string
+              ready:
+                description: Ready indicates the VM process is running.
+                type: boolean
+            required:
+            - ready
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: hypervisormachinetemplates.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    kind: HypervisorMachineTemplate
+    listKind: HypervisorMachineTemplateList
+    plural: hypervisormachinetemplates
+    singular: hypervisormachinetemplate
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          HypervisorMachineTemplate is the Schema for the hypervisormachinetemplates
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              HypervisorMachineTemplateSpec defines the desired state of
+              HypervisorMachineTemplate.
+            properties:
+              template:
+                description: Template describes the machines that will be created
+                  from this template.
+                properties:
+                  metadata:
+                    description: |-
+                      ObjectMeta is the standard object metadata of the machines created from
+                      this template.
+                    type: object
+                  spec:
+                    description: Spec is the specification of the desired behavior
+                      of the machine.
+                    properties:
+                      clusterName:
+                        description: ClusterName is the name of the Cluster this object
+                          belongs to.
+                        type: string
+                      cpu:
+                        description: CPU is the number of vCPUs allocated to the VM.
+                        format: int32
+                        type: integer
+                      disk:
+                        description: Disk is the root disk size in MiB.
+                        format: int32
+                        type: integer
+                      mac:
+                        description: |-
+                          MAC is an optional override for the VM MAC address. When empty the
+                          controller derives the address from a stable hash of cluster/machine
+                          name.
+                        type: string
+                      ram:
+                        description: RAM is the VM memory in MiB.
+                        format: int32
+                        type: integer
+                      retainDiskOnDelete:
+                        description: |-
+                          RetainDiskOnDelete determines whether the root disk survives VM
+                          deletion. Defaults to false: the disk is removed with the VM.
+                        type: boolean
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+        type: object
+    served: true
+    storage: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: hypervisor-manager
+  namespace: hypervisor-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - bootstrap.cluster.x-k8s.io
+  resources:
+  - hypervisorconfigs
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - bootstrap.cluster.x-k8s.io
+  resources:
+  - hypervisorconfigs/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
+  - clusters
+  - clusters/status
+  - machines/status
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
+  - machines
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - controlplane.cluster.x-k8s.io
+  resources:
+  - hypervisorcontrolplanes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - controlplane.cluster.x-k8s.io
+  resources:
+  - hypervisorcontrolplanes/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - hypervisorclusters
+  - hypervisormachines
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - hypervisorclusters/finalizers
+  - hypervisormachines/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - hypervisorclusters/status
+  - hypervisormachines/status
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: hypervisor-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: manager-role
+subjects:
+- kind: ServiceAccount
+  name: hypervisor-manager
+  namespace: hypervisor-system
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster
+  failurePolicy: Fail
+  name: mhypervisorcluster.kb.io
+  rules:
+  - apiGroups:
+    - infrastructure.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisorclusters
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/mutate-bootstrap-cluster-x-k8s-io-v1alpha1-hypervisorconfig
+  failurePolicy: Fail
+  name: mhypervisorconfig.kb.io
+  rules:
+  - apiGroups:
+    - bootstrap.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisorconfigs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/mutate-controlplane-cluster-x-k8s-io-v1alpha1-hypervisorcontrolplane
+  failurePolicy: Fail
+  name: mhypervisorcontrolplane.kb.io
+  rules:
+  - apiGroups:
+    - controlplane.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisorcontrolplanes
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisormachine
+  failurePolicy: Fail
+  name: mhypervisormachine.kb.io
+  rules:
+  - apiGroups:
+    - infrastructure.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisormachines
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisormachinetemplate
+  failurePolicy: Fail
+  name: mhypervisormachinetemplate.kb.io
+  rules:
+  - apiGroups:
+    - infrastructure.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisormachinetemplates
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-hypervisor
+    clusterctl.cluster.x-k8s.io: ""
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/validate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster
+  failurePolicy: Fail
+  name: vhypervisorcluster.kb.io
+  rules:
+  - apiGroups:
+    - infrastructure.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisorclusters
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/validate-bootstrap-cluster-x-k8s-io-v1alpha1-hypervisorconfig
+  failurePolicy: Fail
+  name: vhypervisorconfig.kb.io
+  rules:
+  - apiGroups:
+    - bootstrap.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisorconfigs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/validate-controlplane-cluster-x-k8s-io-v1alpha1-hypervisorcontrolplane
+  failurePolicy: Fail
+  name: vhypervisorcontrolplane.kb.io
+  rules:
+  - apiGroups:
+    - controlplane.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisorcontrolplanes
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/validate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisormachine
+  failurePolicy: Fail
+  name: vhypervisormachine.kb.io
+  rules:
+  - apiGroups:
+    - infrastructure.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisormachines
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    url: https://127.0.0.1:9443/validate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisormachinetemplate
+  failurePolicy: Fail
+  name: vhypervisormachinetemplate.kb.io
+  rules:
+  - apiGroups:
+    - infrastructure.cluster.x-k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hypervisormachinetemplates
+  sideEffects: None
