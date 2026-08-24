@@ -131,7 +131,7 @@ func components(stateDir string) []component {
 			id:      "pki",
 			image:   setupImage,
 			user:    "0",
-			volumes: []volume{{hostPath: stateDir + "/pki"}},
+			volumes: []volume{{hostPath: stateDir + "/pki"}, {hostPath: stateDir + "/webhook-certs"}},
 			env:     []string{envStateDir + "=" + stateDir},
 			command: []string{"pki"},
 		},
@@ -194,6 +194,7 @@ func components(stateDir string) []component {
 			user:  "0",
 			volumes: []volume{
 				{hostPath: stateDir + "/pki", readOnly: true},
+				{hostPath: stateDir + "/webhook-certs"},
 				{hostPath: stateDir + "/kubeconfigs"},
 			},
 			env: []string{

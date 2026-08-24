@@ -79,6 +79,40 @@ func TestEnsureStateDirsCreatesHypervisorWebhookCertsDir(t *testing.T) {
 	}
 }
 
+// TestPKIAndSetupMountWebhookCertsDir pins the REQ-005 mount contract for the
+// two containers that run pki.Generate: both the pki and setup components
+// bind-mount <state>/webhook-certs at the same path so the hypervisor webhook
+// serving pair (<state>/webhook-certs/hypervisor/{tls.crt,tls.key}) lands on
+// the host instead of the container's ephemeral overlay, and survives reboots
+// for reuse-on-restart.
+func TestPKIAndSetupMountWebhookCertsDir(t *testing.T) {
+	t.Parallel()
+
+	const stateDir = "/srv/capishim"
+	want := stateDir + "/webhook-certs"
+	for _, id := range []string{"pki", "setup"} {
+		var mounted, readOnly bool
+		for _, c := range components(stateDir) {
+			if c.id != id {
+				continue
+			}
+			for _, v := range c.volumes {
+				if v.hostPath == want {
+					mounted = true
+					readOnly = v.readOnly
+				}
+			}
+		}
+		if !mounted {
+			t.Errorf("%s component does not mount %s; the hypervisor webhook serving pair would be written to the ephemeral overlay (REQ-005)", id, want)
+			continue
+		}
+		if readOnly {
+			t.Errorf("%s mounts %s read-only; pki.Generate must create the serving pair when absent", id, want)
+		}
+	}
+}
+
 // idsOf returns the component ids in order, for failure messages.
 func idsOf(cs []component) []string {
 	out := make([]string, 0, len(cs))
