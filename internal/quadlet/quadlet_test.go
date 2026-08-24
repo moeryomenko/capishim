@@ -473,11 +473,13 @@ func TestRenderVolumes(t *testing.T) {
 	}
 
 	wantIn("capishim-pki.container", mount("pki", false))
+	wantIn("capishim-pki.container", mount("webhook-certs", false))
 	wantIn("capishim-etcd.container", mount("etcd", false))
 	wantIn("capishim-etcd.container", mount("pki", true))
 	wantIn("capishim-apiserver.container", mount("pki", true))
 	wantIn("capishim-apiserver.container", mount("abac", true))
 	wantIn("capishim-setup.container", mount("pki", true))
+	wantIn("capishim-setup.container", mount("webhook-certs", false))
 	wantIn("capishim-setup.container", mount("kubeconfigs", false))
 	for _, spec := range config.Components() {
 		if spec.WebhookPort == 0 || spec.External {

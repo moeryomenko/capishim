@@ -6,6 +6,7 @@ After=capishim-apiserver.service
 Pod=capishim.pod
 Image={{ .Image }}
 Volume={{ .StateDir }}/pki:{{ .StateDir }}/pki:ro
+Volume={{ .StateDir }}/webhook-certs:{{ .StateDir }}/webhook-certs:rw
 Volume={{ .StateDir }}/kubeconfigs:{{ .StateDir }}/kubeconfigs:rw
 Environment={{ .EnvStateDir }}={{ .StateDir }}
 Environment={{ .EnvBindAddr }}={{ .BindAddress }}

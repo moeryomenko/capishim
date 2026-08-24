@@ -2,6 +2,7 @@
 Pod=capishim.pod
 Image={{ .Image }}
 Volume={{ .StateDir }}/pki:{{ .StateDir }}/pki:rw
+Volume={{ .StateDir }}/webhook-certs:{{ .StateDir }}/webhook-certs:rw
 Environment={{ .EnvStateDir }}={{ .StateDir }}
 User=0
 Exec={{ .Exec }}
