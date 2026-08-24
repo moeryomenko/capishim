@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -186,7 +188,7 @@ func setup(ctx context.Context, env map[string]string) error {
 	// creates them with the rewritten roleRef, and the apiserver rejects
 	// changing the roleRef of an existing binding ("cannot change roleRef")
 	// (REQ-004, VC-01).
-	loaded, err := manifests.Load(ProviderManifestFiles(manifestsRoot)...)
+	loaded, err := LoadDedupedObjects(ProviderManifestFiles(manifestsRoot))
 	if err != nil {
 		return fmt.Errorf("load provider manifests: %w", err)
 	}
@@ -322,6 +324,59 @@ func ProviderManifestFiles(dir string) []string {
 		filepath.Join(dir, "bootstrap-hypervisor", providerManifestFile),
 		filepath.Join(dir, "control-plane-hypervisor", providerManifestFile),
 	}
+}
+
+// LoadDedupedObjects reads and parses every manifest file in paths, in order,
+// and returns the parsed objects with duplicates removed: when two documents
+// share the identity apiVersion+kind+namespace+name, only the first-seen copy
+// is kept. The dedupe is required because the three vendored hypervisor
+// provider.yaml files ship one byte-identical shared object set, so loading
+// all seven provider trees would hand manifests.Apply three copies of every
+// hypervisor object and trip its same-batch duplicate-identifier refusal.
+// When two same-identity documents differ in content the load fails, naming
+// the object and both source files: silently picking one would mask vendored
+// drift between provider trees that are supposed to share an object set.
+func LoadDedupedObjects(paths []string) ([]unstructured.Unstructured, error) {
+	var (
+		objs     []unstructured.Unstructured
+		sources  []string
+		firstIdx = make(map[string]int)
+	)
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("manifests: read %s: %w", path, err)
+		}
+		parsed, err := manifests.Parse(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("manifests: parse %s: %w", path, err)
+		}
+		for i := range parsed {
+			obj := &parsed[i]
+			id := objectIdentity(obj)
+			first, seen := firstIdx[id]
+			if !seen {
+				firstIdx[id] = len(objs)
+				objs = append(objs, *obj)
+				sources = append(sources, path)
+				continue
+			}
+			if reflect.DeepEqual(objs[first].Object, obj.Object) {
+				continue
+			}
+			return nil, fmt.Errorf(
+				"manifests: %s %s %q (namespace %q) is defined with different content in %s and %s",
+				obj.GetAPIVersion(), obj.GetKind(), obj.GetName(), obj.GetNamespace(), sources[first], path,
+			)
+		}
+	}
+	return objs, nil
+}
+
+// objectIdentity is the dedupe key of one manifest object: apiVersion, kind,
+// namespace, and name.
+func objectIdentity(obj *unstructured.Unstructured) string {
+	return obj.GetAPIVersion() + "\x00" + obj.GetKind() + "\x00" + obj.GetNamespace() + "\x00" + obj.GetName()
 }
 
 // ManagerCNByNamespace maps each provider namespace to the manager client-cert

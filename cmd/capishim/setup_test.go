@@ -1100,3 +1100,138 @@ func writeProviderTree(t *testing.T, root string, trees map[string]string) {
 		}
 	}
 }
+
+// TestLoadDedupedObjects covers the load-stage dedupe behind the live-boot fix
+// (TASK-021a P3/P4): the three vendored hypervisor provider.yaml files are
+// byte-identical fully-shared object sets, so loading all seven trees yields
+// three copies of every hypervisor object and manifests.Apply refuses the
+// batch ("duplicate identifier"). Identical copies must collapse to one;
+// same-identity objects with different content must fail loudly naming the
+// object and both source files, so future vendored drift cannot be silently
+// masked by a last-wins pick.
+func TestLoadDedupedObjects(t *testing.T) {
+	t.Parallel()
+	const namespaceDoc = "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: hypervisor-system\n"
+	t.Run("identical duplicate across providers dedupes to one", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeProviderTree(t, root, map[string]string{
+			"infrastructure-hypervisor": namespaceDoc,
+			"bootstrap-hypervisor":      namespaceDoc,
+			"control-plane-hypervisor":  "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: other-system\n",
+		})
+		got, err := capishim.LoadDedupedObjects([]string{
+			filepath.Join(root, "infrastructure-hypervisor", "provider.yaml"),
+			filepath.Join(root, "bootstrap-hypervisor", "provider.yaml"),
+			filepath.Join(root, "control-plane-hypervisor", "provider.yaml"),
+		})
+		if err != nil {
+			t.Fatalf("LoadDedupedObjects returned error: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("deduped to %d objects, want 2 (one shared Namespace plus the distinct one)", len(got))
+		}
+		if got[0].GetName() != "hypervisor-system" || got[1].GetName() != "other-system" {
+			t.Errorf("deduped objects = [%s %s], want first-seen order [hypervisor-system other-system]", got[0].GetName(), got[1].GetName())
+		}
+	})
+	t.Run("conflicting duplicate errors naming object and sources", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeProviderTree(t, root, map[string]string{
+			"infrastructure-hypervisor": namespaceDoc,
+			"bootstrap-hypervisor":      "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: hypervisor-system\n  labels:\n    drift: true\n",
+		})
+		_, err := capishim.LoadDedupedObjects([]string{
+			filepath.Join(root, "infrastructure-hypervisor", "provider.yaml"),
+			filepath.Join(root, "bootstrap-hypervisor", "provider.yaml"),
+		})
+		if err == nil {
+			t.Fatal("LoadDedupedObjects accepted conflicting same-identity objects, want loud error")
+		}
+		for _, want := range []string{"Namespace", "hypervisor-system", "infrastructure-hypervisor", "bootstrap-hypervisor"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %q", err, want)
+			}
+		}
+	})
+	t.Run("vendored hypervisor trees dedupe to the shared set once", func(t *testing.T) {
+		t.Parallel()
+		// Live-scenario simulation: a fixture root holding a minimal core tree
+		// plus the three REAL vendored hypervisor files copied verbatim.
+		root := t.TempDir()
+		trees := map[string]string{"core": "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: capi-system\n"}
+		for _, dir := range []string{"infrastructure-hypervisor", "bootstrap-hypervisor", "control-plane-hypervisor"} {
+			data, err := os.ReadFile(filepath.Join(vendoredManifestsRoot, dir, "provider.yaml"))
+			if err != nil {
+				t.Fatalf("read vendored %s manifest: %v", dir, err)
+			}
+			trees[dir] = string(data)
+		}
+		writeProviderTree(t, root, trees)
+		raw, err := manifests.Load(
+			filepath.Join(root, "core", "provider.yaml"),
+			filepath.Join(root, "infrastructure-hypervisor", "provider.yaml"),
+			filepath.Join(root, "bootstrap-hypervisor", "provider.yaml"),
+			filepath.Join(root, "control-plane-hypervisor", "provider.yaml"),
+		)
+		if err != nil {
+			t.Fatalf("raw load: %v", err)
+		}
+		// Non-vacuous guard: the shared hypervisor set carries 14 objects of
+		// which 13 are applied kinds, so three copies yield 39 kept objects
+		// with 14 duplicated identities before the dedupe.
+		if len(raw) != 43 {
+			t.Fatalf("fixture raw load = %d objects, want 43 (core Namespace plus 3x14 hypervisor objects)", len(raw))
+		}
+		got, err := capishim.LoadDedupedObjects([]string{
+			filepath.Join(root, "core", "provider.yaml"),
+			filepath.Join(root, "infrastructure-hypervisor", "provider.yaml"),
+			filepath.Join(root, "bootstrap-hypervisor", "provider.yaml"),
+			filepath.Join(root, "control-plane-hypervisor", "provider.yaml"),
+		})
+		if err != nil {
+			t.Fatalf("LoadDedupedObjects returned error: %v", err)
+		}
+		if len(got) != 15 {
+			t.Fatalf("deduped load = %d objects, want 15 (core Namespace plus the shared hypervisor set once)", len(got))
+		}
+		var kept []unstructured.Unstructured
+		for i := range got {
+			if manifests.Keep(&got[i]) {
+				kept = append(kept, got[i])
+			}
+		}
+		if len(kept) != 14 {
+			t.Fatalf("kept %d objects after dedupe, want 14 (core Namespace plus 13 applied hypervisor kinds, not 39)", len(kept))
+		}
+		counts := make(map[string]int)
+		for i := range kept {
+			obj := &kept[i]
+			counts[obj.GetAPIVersion()+"\x00"+obj.GetKind()+"\x00"+obj.GetNamespace()+"\x00"+obj.GetName()]++
+		}
+		for id, n := range counts {
+			if n != 1 {
+				t.Errorf("identity %q survives %d times after dedupe, want exactly 1", id, n)
+			}
+		}
+		namespaces := 0
+		crds := make(map[string]int)
+		for i := range kept {
+			switch kept[i].GetKind() {
+			case "Namespace":
+				if kept[i].GetName() == "hypervisor-system" {
+					namespaces++
+				}
+			case "CustomResourceDefinition":
+				crds[kept[i].GetName()]++
+			}
+		}
+		if namespaces != 1 {
+			t.Errorf("Namespace hypervisor-system appears %d times after dedupe, want 1", namespaces)
+		}
+		if len(crds) != 8 {
+			t.Errorf("deduped set carries %d distinct hypervisor CRDs, want 8", len(crds))
+		}
+	})
+}
