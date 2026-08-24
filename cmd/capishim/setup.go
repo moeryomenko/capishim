@@ -90,6 +90,13 @@ const kubeconfigContextName = "default"
 // provider directory (assumption 4).
 const providerManifestFile = "provider.yaml"
 
+// hypervisorWebhookPort is the webhook listener port of the external
+// hypervisor provider manager (REQ-004): setup redirects loopback
+// clientConfig URLs on this port to the configured hypervisor webhook host
+// (REQ-003, REQ-006). It mirrors ComponentHypervisor.WebhookPort in the
+// config component table, the single source of truth for that identity.
+const hypervisorWebhookPort = 9443
+
 // Webhook-carrying kinds rewritten by WebhookObjects (REQ-005).
 const (
 	kindCustomResourceDefinition       = "CustomResourceDefinition"
@@ -141,7 +148,11 @@ func setup(ctx context.Context, env map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("apiserver timeout: %w", err)
 	}
-	inv, err := pki.Generate(ctx, pki.Config{StateDir: cfg.StateDir, BindAddress: cfg.BindAddress})
+	inv, err := pki.Generate(ctx, pki.Config{
+		StateDir:              cfg.StateDir,
+		BindAddress:           cfg.BindAddress,
+		HypervisorWebhookHost: cfg.HypervisorWebhookHost,
+	})
 	if err != nil {
 		return fmt.Errorf("generate certificates: %w", err)
 	}
@@ -169,11 +180,12 @@ func setup(ctx context.Context, env map[string]string) error {
 		return fmt.Errorf("build apiextensions client: %w", err)
 	}
 
-	// CRDs: apply the kept non-binding kinds from all four provider manifests
-	// and wait until every CAPI CRD reports Established (REQ-003). The RBAC
-	// bindings are deliberately excluded: the second apply creates them with
-	// the rewritten roleRef, and the apiserver rejects changing the roleRef
-	// of an existing binding ("cannot change roleRef") (REQ-004, VC-01).
+	// CRDs: apply the kept non-binding kinds from all seven provider manifests
+	// and wait until every CRD carried by the loaded set reports Established
+	// (REQ-002). The RBAC bindings are deliberately excluded: the second apply
+	// creates them with the rewritten roleRef, and the apiserver rejects
+	// changing the roleRef of an existing binding ("cannot change roleRef")
+	// (REQ-004, VC-01).
 	loaded, err := manifests.Load(ProviderManifestFiles(manifestsRoot)...)
 	if err != nil {
 		return fmt.Errorf("load provider manifests: %w", err)
@@ -182,7 +194,7 @@ func setup(ctx context.Context, env map[string]string) error {
 	if err := manifests.Apply(ctx, dyn, WithoutRBACBindings(kept)); err != nil {
 		return fmt.Errorf("apply provider manifests: %w", err)
 	}
-	if err := manifests.WaitForCRDEstablished(ctx, apiext.ApiextensionsV1(), CRDNames(), crdWaitTimeout); err != nil {
+	if err := manifests.WaitForCRDEstablished(ctx, apiext.ApiextensionsV1(), CrdNamesFrom(kept), crdWaitTimeout); err != nil {
 		return fmt.Errorf("wait for CRD establishment: %w", err)
 	}
 
@@ -200,7 +212,9 @@ func setup(ctx context.Context, env map[string]string) error {
 
 	// Webhooks: rewrite every service-based clientConfig (admission webhook
 	// configurations and CRD conversion webhooks) to a loopback URL with the
-	// pod CA injected, then apply the rewritten objects (REQ-005).
+	// pod CA injected, then apply the rewritten objects (REQ-005). Loopback
+	// URLs on the external hypervisor manager's port are redirected to the
+	// configured hypervisor webhook host instead (REQ-003, REQ-006).
 	caPEM, err := os.ReadFile(inv.CA.CertPath)
 	if err != nil {
 		return fmt.Errorf("read pod CA: %w", err)
@@ -209,7 +223,12 @@ func setup(ctx context.Context, env map[string]string) error {
 	if err != nil {
 		return err
 	}
-	if err := webhookrewrite.RewriteAll(webhookObjects, WebhookPortsByNamespace(), caPEM); err != nil {
+	if err := webhookrewrite.RewriteAll(
+		webhookObjects,
+		RewriteWebhookPortsByNamespace(),
+		caPEM,
+		webhookrewrite.WithExternalWebhookHost(cfg.HypervisorWebhookHost, hypervisorWebhookPort),
+	); err != nil {
 		return fmt.Errorf("rewrite webhooks: %w", err)
 	}
 	rewrittenWebhooks, err := UnstructuredObjects(webhookObjects)
@@ -289,21 +308,26 @@ func APIServerURL(bindAddress string) string {
 	return apiserverSchemeHost + defaultAPIServerPort
 }
 
-// ProviderManifestFiles returns the four vendored provider manifest files
+// ProviderManifestFiles returns the seven vendored provider manifest files
 // under the manifests root dir: templates/manifests/<provider>/provider.yaml
-// (assumption 4).
+// for the four in-pod provider managers and the three vendored hypervisor
+// trees (assumption 4, REQ-001).
 func ProviderManifestFiles(dir string) []string {
 	return []string{
 		filepath.Join(dir, "core", providerManifestFile),
 		filepath.Join(dir, "cabpk", providerManifestFile),
 		filepath.Join(dir, "kcp", providerManifestFile),
 		filepath.Join(dir, "capd", providerManifestFile),
+		filepath.Join(dir, "infrastructure-hypervisor", providerManifestFile),
+		filepath.Join(dir, "bootstrap-hypervisor", providerManifestFile),
+		filepath.Join(dir, "control-plane-hypervisor", providerManifestFile),
 	}
 }
 
 // ManagerCNByNamespace maps each provider namespace to the manager client-cert
-// CN that carries that provider's RBAC permissions (REQ-004), derived from
-// the component spec table.
+// CN that carries that provider's RBAC permissions (REQ-004), derived from the
+// component spec table: the single source of truth for manager identity,
+// including the external hypervisor manager.
 func ManagerCNByNamespace() map[string]string {
 	cnByNamespace := make(map[string]string)
 	for _, spec := range config.Components() {
@@ -314,16 +338,37 @@ func ManagerCNByNamespace() map[string]string {
 	return cnByNamespace
 }
 
-// WebhookPortsByNamespace maps each provider namespace to the manager webhook
-// listener port (REQ-005, REQ-006), derived from the component spec table.
+// WebhookPortsByNamespace maps each in-pod provider namespace to the manager
+// webhook listener port (REQ-005, REQ-006), derived from the component spec
+// table. External specs are excluded: their webhook servers run outside the
+// pod and join only the rewrite-path map below.
 func WebhookPortsByNamespace() map[string]int {
 	portsByNamespace := make(map[string]int)
 	for _, spec := range config.Components() {
+		if spec.External {
+			continue
+		}
 		if spec.ProviderNamespace != "" && spec.WebhookPort != 0 {
 			portsByNamespace[spec.ProviderNamespace] = spec.WebhookPort
 		}
 	}
 	return portsByNamespace
+}
+
+// RewriteWebhookPortsByNamespace extends WebhookPortsByNamespace with the
+// external component namespaces (REQ-003): the setup rewrite pass must
+// recognize loopback clientConfig URLs on the hypervisor manager's webhook
+// port, while WebhookPortsByNamespace itself stays pinned at the in-pod
+// manager entries.
+func RewriteWebhookPortsByNamespace() map[string]int {
+	ports := WebhookPortsByNamespace()
+	for _, spec := range config.Components() {
+		if !spec.External || spec.ProviderNamespace == "" || spec.WebhookPort == 0 {
+			continue
+		}
+		ports[spec.ProviderNamespace] = spec.WebhookPort
+	}
+	return ports
 }
 
 // ManagerArtifact returns the manager client certificate artifact for the
@@ -338,6 +383,8 @@ func ManagerArtifact(id config.ComponentID, inv *pki.Inventory) (pki.Artifact, b
 		return inv.KCPManager, true
 	case config.ComponentCAPD:
 		return inv.CAPDManager, true
+	case config.ComponentHypervisor:
+		return inv.HypervisorManager, true
 	case config.ComponentPKI, config.ComponentEtcd, config.ComponentAPIServer, config.ComponentSetup:
 		return pki.Artifact{}, false
 	default:
@@ -415,13 +462,15 @@ func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-// CRDNames returns the fifteen Cluster API CRDs setup waits to become
-// Established after applying the vendored provider manifests (REQ-003): the
-// kinds REQ-003 lists (Cluster, Machine, MachineDeployment, MachineSet,
-// MachineHealthCheck, ClusterClass, ClusterResourceSet, KubeadmConfig,
-// KubeadmConfigTemplate, KubeadmControlPlane, DevCluster, DevMachine,
-// DevClusterTemplate, DevMachineTemplate, DevMachinePoolTemplate) with the
-// Dev* kinds renamed to their infrastructure group resources.
+// CRDNames returns the fifteen Cluster API CRDs carried by the four stock
+// provider manifests (REQ-003): the kinds REQ-003 lists (Cluster, Machine,
+// MachineDeployment, MachineSet, MachineHealthCheck, ClusterClass,
+// ClusterResourceSet, KubeadmConfig, KubeadmConfigTemplate, KubeadmControlPlane,
+// DevCluster, DevMachine, DevClusterTemplate, DevMachineTemplate,
+// DevMachinePoolTemplate) with the Dev* kinds renamed to their infrastructure
+// group resources. It is the hardcoded reference literal only: since REQ-002
+// the Established wait list is derived from the loaded manifests via
+// CrdNamesFrom, so a vendored CRD absent from this literal is still waited on.
 func CRDNames() []string {
 	return []string{
 		"clusterclasses.cluster.x-k8s.io",
@@ -440,6 +489,30 @@ func CRDNames() []string {
 		"machines.cluster.x-k8s.io",
 		"machinesets.cluster.x-k8s.io",
 	}
+}
+
+// CrdNamesFrom derives the CRD Established wait list from the loaded manifest
+// objects: the names of every CustomResourceDefinition in objs, in first-seen
+// order and deduplicated (the three hypervisor trees vendor one shared object
+// set, so every hypervisor CRD appears three times across the loaded set).
+// Deriving the list from the loaded set rather than only the hardcoded
+// CRDNames literal guarantees a future vendored CRD addition cannot be
+// silently skipped (REQ-002). Nil or empty input yields nil.
+func CrdNamesFrom(objs []unstructured.Unstructured) []string {
+	seen := make(map[string]bool)
+	var names []string
+	for i := range objs {
+		if objs[i].GetKind() != kindCustomResourceDefinition {
+			continue
+		}
+		name := objs[i].GetName()
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
 }
 
 // WaitForAPIServer polls the apiserver /healthz endpoint until it returns any

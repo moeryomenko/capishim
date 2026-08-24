@@ -127,6 +127,9 @@ func TestProviderManifestFiles(t *testing.T) {
 		filepath.Join("/m", "cabpk", "provider.yaml"),
 		filepath.Join("/m", "kcp", "provider.yaml"),
 		filepath.Join("/m", "capd", "provider.yaml"),
+		filepath.Join("/m", "infrastructure-hypervisor", "provider.yaml"),
+		filepath.Join("/m", "bootstrap-hypervisor", "provider.yaml"),
+		filepath.Join("/m", "control-plane-hypervisor", "provider.yaml"),
 	}
 	if len(got) != len(want) {
 		t.Fatalf("ProviderManifestFiles = %v, want %v", got, want)
@@ -145,6 +148,7 @@ func TestManagerCNByNamespace(t *testing.T) {
 		"capi-kubeadm-bootstrap-system":     "capishim:cabpk-manager",
 		"capi-kubeadm-control-plane-system": "capishim:kcp-manager",
 		"capd-system":                       "capishim:capd-manager",
+		"hypervisor-system":                 "capishim:hypervisor-manager",
 	}
 	got := capishim.ManagerCNByNamespace()
 	if len(got) != len(want) {
@@ -508,7 +512,11 @@ func TestWithoutRBACBindingsOnVendoredManifests(t *testing.T) {
 			t.Fatalf("marshal kept[%d]: %v", j, err)
 		}
 		if !bytes.Equal(gotData, keptData) {
-			t.Errorf("WithoutRBACBindings changed %s %q (order and content must be preserved)", kept[j].GetKind(), kept[j].GetName())
+			t.Errorf(
+				"WithoutRBACBindings changed %s %q (order and content must be preserved)",
+				kept[j].GetKind(),
+				kept[j].GetName(),
+			)
 		}
 		i++
 	}
@@ -678,4 +686,417 @@ func writeClientKeyPair(t *testing.T) (_ *x509.Certificate, _, _ string) {
 		t.Fatalf("write client key: %v", err)
 	}
 	return parsed, certPath, keyPath
+}
+
+// The tests below cover the hypervisor integration of the setup pipeline
+// (REQ-001, REQ-002, VC-01 CRD/RBAC clauses): the vendored load set gains the
+// three hypervisor trees, the keep filter admits their CRDs and RBAC while
+// dropping workload kinds, the CRD Established wait list is derived from the
+// loaded manifests, and the hypervisor-system ServiceAccount bindings rewrite
+// to the hypervisor manager CN User.
+
+// hypervisorInfraDocs is the infrastructure-hypervisor provider.yaml fixture:
+// the three infrastructure-group hypervisor CRDs plus a Deployment that the
+// keep filter must drop (the manager runs outside the pod, REQ-002).
+const hypervisorInfraDocs = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: hypervisorclusters.infrastructure.cluster.x-k8s.io
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: hypervisormachines.infrastructure.cluster.x-k8s.io
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: hypervisormachinetemplates.infrastructure.cluster.x-k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hypervisor-controller-manager
+  namespace: hypervisor-system
+`
+
+// hypervisorBootstrapDocs is the bootstrap-hypervisor provider.yaml fixture:
+// the bootstrap-group hypervisor CRD plus a RoleBinding whose ServiceAccount
+// subject lives in hypervisor-system (REQ-002, REQ-004).
+const hypervisorBootstrapDocs = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: hypervisorconfigs.bootstrap.cluster.x-k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hypervisor-leader-election-rolebinding
+  namespace: hypervisor-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hypervisor-leader-election-role
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: ServiceAccount
+  name: hypervisor-controller-manager
+  namespace: hypervisor-system
+`
+
+// hypervisorControlPlaneDocs is the control-plane-hypervisor provider.yaml
+// fixture: the controlplane-group hypervisor CRD plus the two webhook
+// configuration kinds the setup container rewrites (REQ-002).
+const hypervisorControlPlaneDocs = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: hypervisorcontrolplanes.controlplane.cluster.x-k8s.io
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: hypervisor-mutating-webhook-configuration
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: hypervisor-validating-webhook-configuration
+`
+
+// hypervisorCRDNames lists the five hypervisor CRDs REQ-002 names.
+var hypervisorCRDNames = []string{
+	"hypervisorclusters.infrastructure.cluster.x-k8s.io",
+	"hypervisormachines.infrastructure.cluster.x-k8s.io",
+	"hypervisormachinetemplates.infrastructure.cluster.x-k8s.io",
+	"hypervisorconfigs.bootstrap.cluster.x-k8s.io",
+	"hypervisorcontrolplanes.controlplane.cluster.x-k8s.io",
+}
+
+// TestProviderManifestFilesIncludesHypervisorTrees verifies the setup load
+// set covers the three vendored hypervisor trees alongside the four existing
+// ones (REQ-001, REQ-002): against a fixture root holding all seven
+// provider.yaml files, ProviderManifestFiles must return exactly those seven
+// paths, each pointing at an existing file.
+func TestProviderManifestFilesIncludesHypervisorTrees(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeProviderTree(t, root, map[string]string{
+		"core":                      "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: capi-system\n",
+		"cabpk":                     "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: capi-kubeadm-bootstrap-system\n",
+		"kcp":                       "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: capi-kubeadm-control-plane-system\n",
+		"capd":                      "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: capd-system\n",
+		"infrastructure-hypervisor": hypervisorInfraDocs,
+		"bootstrap-hypervisor":      hypervisorBootstrapDocs,
+		"control-plane-hypervisor":  hypervisorControlPlaneDocs,
+	})
+	want := map[string]bool{}
+	for _, dir := range []string{
+		"core", "cabpk", "kcp", "capd",
+		"infrastructure-hypervisor", "bootstrap-hypervisor", "control-plane-hypervisor",
+	} {
+		want[filepath.Join(root, dir, "provider.yaml")] = true
+	}
+	got := capishim.ProviderManifestFiles(root)
+	if len(got) != len(want) {
+		t.Errorf("ProviderManifestFiles returned %d paths, want %d: %v", len(got), len(want), got)
+	}
+	for _, path := range got {
+		if !want[path] {
+			t.Errorf("ProviderManifestFiles returned unexpected path %q", path)
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("ProviderManifestFiles path %q does not exist in the fixture tree: %v", path, err)
+		}
+	}
+	for path := range want {
+		found := false
+		for _, gotPath := range got {
+			if gotPath == path {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("ProviderManifestFiles is missing %q (REQ-001)", path)
+		}
+	}
+}
+
+// TestKeepObjectsHypervisorMultiDocManifest verifies the keep transform over
+// a synthetic multi-document hypervisor manifest (REQ-002, VC-01): exactly
+// the five hypervisor CRDs, the four RBAC kinds, the two webhook
+// configuration kinds, and the Namespace survive, and the manager Deployment
+// is dropped.
+func TestKeepObjectsHypervisorMultiDocManifest(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "provider.yaml")
+	docs := hypervisorInfraDocs + "---\n" + hypervisorBootstrapDocs + "---\n" +
+		hypervisorControlPlaneDocs + "---\n" +
+		"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: hypervisor-system\n---\n" +
+		"apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: hypervisor-manager-role\n---\n" +
+		"apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: hypervisor-manager-rolebinding\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: hypervisor-manager-role\nsubjects:\n- apiGroup: rbac.authorization.k8s.io\n  kind: ServiceAccount\n  name: hypervisor-controller-manager\n  namespace: hypervisor-system\n---\n" +
+		"apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: hypervisor-leader-election-role\n  namespace: hypervisor-system\n"
+	if err := os.WriteFile(path, []byte(docs), 0o644); err != nil {
+		t.Fatalf("write fixture manifest: %v", err)
+	}
+	loaded, err := manifests.Load(path)
+	if err != nil {
+		t.Fatalf("load fixture manifest: %v", err)
+	}
+	if len(loaded) != 13 {
+		t.Fatalf("fixture parsed as %d objects, want 13 (5 CRDs, Deployment, 4 RBAC, 2 webhooks, Namespace)", len(loaded))
+	}
+	var kept []unstructured.Unstructured
+	for i := range loaded {
+		if manifests.Keep(&loaded[i]) {
+			kept = append(kept, loaded[i])
+		}
+	}
+	if len(kept) != 12 {
+		t.Errorf("keep filter kept %d of %d objects, want 12 (Deployment dropped)", len(kept), len(loaded))
+	}
+	crds := make(map[string]bool)
+	for i := range kept {
+		switch {
+		case kept[i].GetKind() == "CustomResourceDefinition":
+			crds[kept[i].GetName()] = true
+		case kept[i].GetKind() == "Deployment":
+			t.Errorf("Deployment %q survived the keep filter; the manager runs outside the pod (REQ-002)", kept[i].GetName())
+		}
+	}
+	for _, name := range hypervisorCRDNames {
+		if !crds[name] {
+			t.Errorf("hypervisor CRD %q was dropped by the keep filter (REQ-002)", name)
+		}
+	}
+}
+
+// TestSetupPipelineKeepsHypervisorObjectsFromLoadSet runs the pipeline
+// composition setup uses — ProviderManifestFiles -> manifests.Load ->
+// manifests.Keep — over a full seven-tree fixture root and asserts the five
+// hypervisor CRDs reach the kept set while the manager Deployment does not
+// (REQ-002, VC-01).
+func TestSetupPipelineKeepsHypervisorObjectsFromLoadSet(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeProviderTree(t, root, map[string]string{
+		"core":                      "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: capi-system\n",
+		"cabpk":                     "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: capi-kubeadm-bootstrap-system\n",
+		"kcp":                       "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: capi-kubeadm-control-plane-system\n",
+		"capd":                      "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: capd-system\n",
+		"infrastructure-hypervisor": hypervisorInfraDocs,
+		"bootstrap-hypervisor":      hypervisorBootstrapDocs,
+		"control-plane-hypervisor":  hypervisorControlPlaneDocs,
+	})
+	loaded, err := manifests.Load(capishim.ProviderManifestFiles(root)...)
+	if err != nil {
+		t.Fatalf("load provider manifests: %v", err)
+	}
+	deployments := 0
+	var kept []unstructured.Unstructured
+	for i := range loaded {
+		if loaded[i].GetKind() == "Deployment" {
+			deployments++
+		}
+		if manifests.Keep(&loaded[i]) {
+			kept = append(kept, loaded[i])
+		}
+	}
+	if deployments != 1 {
+		t.Fatalf("fixture load set carries %d Deployments, want 1", deployments)
+	}
+	crds := make(map[string]bool)
+	for i := range kept {
+		if kept[i].GetKind() == "CustomResourceDefinition" {
+			crds[kept[i].GetName()] = true
+		}
+	}
+	for _, name := range hypervisorCRDNames {
+		if !crds[name] {
+			t.Errorf("hypervisor CRD %q missing from the kept set; the setup load set does not include its tree (REQ-002)", name)
+		}
+	}
+	if len(kept) != len(loaded)-deployments {
+		t.Errorf(
+			"kept %d of %d objects after dropping %d Deployments; the filter dropped more than the Deployment",
+			len(kept),
+			len(loaded),
+			deployments,
+		)
+	}
+}
+
+// TestCRDNamesDerivedFromLoadedManifests pins REQ-002's derivation clause: the
+// Established wait list must come from the loaded manifests, so a CRD absent
+// from the hardcoded CRDNames() literal is still waited on. The test targets
+// the to-be-extracted seam crdNamesFrom(objs []unstructured.Unstructured)
+// []string in package main of cmd/capishim. NOTE FOR THE IMPLEMENTER: this
+// file is package main_test, so the seam must be reachable from the external
+// test package — either export it or move this one test into an internal
+// package-main test file. Until the seam exists the whole test package fails
+// to compile; that compile failure is the expected red evidence.
+func TestCRDNamesDerivedFromLoadedManifests(t *testing.T) {
+	t.Parallel()
+	const synthetic = "newskind.example.com"
+	objs := []unstructured.Unstructured{
+		testObj("apiextensions.k8s.io/v1", "CustomResourceDefinition", synthetic, ""),
+		testObj("apiextensions.k8s.io/v1", "CustomResourceDefinition", "clusters.cluster.x-k8s.io", ""),
+		testObj("apps/v1", "Deployment", "hypervisor-controller-manager", "hypervisor-system"),
+	}
+	got := capishim.CrdNamesFrom(objs)
+	found := false
+	for _, name := range got {
+		if name == synthetic {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf(
+			"crdNamesFrom omitted %q; a vendored CRD outside the hardcoded literal would never be waited on (REQ-002)",
+			synthetic,
+		)
+	}
+	found = false
+	for _, name := range got {
+		if name == "clusters.cluster.x-k8s.io" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("crdNamesFrom omitted clusters.cluster.x-k8s.io from the derived wait list")
+	}
+	for _, name := range got {
+		if name == "hypervisor-controller-manager" {
+			t.Errorf("crdNamesFrom admitted non-CRD object %q", name)
+		}
+	}
+	for _, name := range capishim.CRDNames() {
+		if name == synthetic {
+			t.Errorf(
+				"%q is present in the hardcoded CRDNames literal; the fixture no longer proves derivation (REQ-002)",
+				synthetic,
+			)
+		}
+	}
+	empty := capishim.CrdNamesFrom(nil)
+	if len(empty) != 0 {
+		t.Errorf("crdNamesFrom(nil) = %v, want empty", empty)
+	}
+}
+
+// TestManagerCNByNamespaceCoversHypervisorSystem verifies the namespace-to-CN
+// map carries the hypervisor entry REQ-004 requires. Forward dependency: the
+// entry derives from config.Components(), so landing this assertion green
+// requires the ComponentHypervisor spec entry (TASK-009); until then the map
+// lookup misses and the test stays red.
+func TestManagerCNByNamespaceCoversHypervisorSystem(t *testing.T) {
+	t.Parallel()
+	got := capishim.ManagerCNByNamespace()
+	if got["hypervisor-system"] != "capishim:hypervisor-manager" {
+		t.Errorf(
+			"ManagerCNByNamespace()[%q] = %q, want %q (REQ-004)",
+			"hypervisor-system",
+			got["hypervisor-system"],
+			"capishim:hypervisor-manager",
+		)
+	}
+}
+
+// TestRewriteRBACSubjectsHypervisorSystem verifies the RBAC rewrite end to end
+// for the hypervisor namespace (REQ-002, REQ-004, VC-01): a RoleBinding whose
+// ServiceAccount subject lives in hypervisor-system becomes a User subject
+// named by the hypervisor manager CN, a mixed-namespace binding maps each
+// subject through its own namespace's CN, and the input binding is not
+// mutated.
+func TestRewriteRBACSubjectsHypervisorSystem(t *testing.T) {
+	t.Parallel()
+	binding := bindingTestObj(
+		"RoleBinding",
+		"hypervisor-leader-election-rolebinding",
+		"hypervisor-system",
+		"hypervisor-leader-election-role",
+	)
+	snapshot, err := json.Marshal(binding.Object)
+	if err != nil {
+		t.Fatalf("marshal input binding: %v", err)
+	}
+	rewritten, err := manifests.RewriteRBACSubjects([]unstructured.Unstructured{binding}, capishim.ManagerCNByNamespace())
+	if err != nil {
+		t.Fatalf("RewriteRBACSubjects returned error: %v", err)
+	}
+	subjects, ok := rewritten[0].Object["subjects"].([]interface{})
+	if !ok || len(subjects) != 1 {
+		t.Fatalf(
+			"rewritten binding carries %T subjects (%v), want one rewritten subject",
+			rewritten[0].Object["subjects"],
+			rewritten[0].Object["subjects"],
+		)
+	}
+	subject, ok := subjects[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("subject is %T, want an object", subjects[0])
+	}
+	if subject["kind"] != "User" || subject["name"] != "capishim:hypervisor-manager" {
+		t.Errorf("rewritten subject = %v, want User capishim:hypervisor-manager (REQ-004)", subject)
+	}
+	after, err := json.Marshal(binding.Object)
+	if err != nil {
+		t.Fatalf("marshal input binding after call: %v", err)
+	}
+	if !bytes.Equal(snapshot, after) {
+		t.Errorf("RewriteRBACSubjects mutated its input:\nbefore: %s\nafter:  %s", snapshot, after)
+	}
+
+	mixed := testObj("rbac.authorization.k8s.io/v1", "RoleBinding", "hypervisor-mixed-rolebinding", "hypervisor-system")
+	mixed.Object["roleRef"] = map[string]interface{}{
+		"apiGroup": "rbac.authorization.k8s.io",
+		"kind":     "Role",
+		"name":     "hypervisor-manager-role",
+	}
+	mixed.Object["subjects"] = []interface{}{
+		map[string]interface{}{
+			"apiGroup":  "rbac.authorization.k8s.io",
+			"kind":      "ServiceAccount",
+			"name":      "hypervisor-controller-manager",
+			"namespace": "hypervisor-system",
+		},
+		map[string]interface{}{
+			"apiGroup":  "rbac.authorization.k8s.io",
+			"kind":      "ServiceAccount",
+			"name":      "capi-manager",
+			"namespace": "capi-system",
+		},
+	}
+	rewritten, err = manifests.RewriteRBACSubjects([]unstructured.Unstructured{mixed}, capishim.ManagerCNByNamespace())
+	if err != nil {
+		t.Fatalf("RewriteRBACSubjects(mixed) returned error: %v", err)
+	}
+	subjects, ok = rewritten[0].Object["subjects"].([]interface{})
+	if !ok || len(subjects) != 2 {
+		t.Fatalf("rewritten mixed binding carries %v subjects, want two", rewritten[0].Object["subjects"])
+	}
+	first, _ := subjects[0].(map[string]interface{})
+	second, _ := subjects[1].(map[string]interface{})
+	if first["name"] != "capishim:hypervisor-manager" {
+		t.Errorf("mixed subject[0] = %v, want User capishim:hypervisor-manager", first)
+	}
+	if second["name"] != "capishim:core-manager" {
+		t.Errorf("mixed subject[1] = %v, want User capishim:core-manager", second)
+	}
+}
+
+// writeProviderTree materializes a fixture manifests root: one provider.yaml
+// per entry of trees under root/<dir>/provider.yaml.
+func writeProviderTree(t *testing.T, root string, trees map[string]string) {
+	t.Helper()
+	for dir, content := range trees {
+		dirPath := filepath.Join(root, dir)
+		if err := os.MkdirAll(dirPath, 0o755); err != nil {
+			t.Fatalf("create fixture dir %s: %v", dirPath, err)
+		}
+		if err := os.WriteFile(filepath.Join(dirPath, "provider.yaml"), []byte(content), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", filepath.Join(dirPath, "provider.yaml"), err)
+		}
+	}
 }

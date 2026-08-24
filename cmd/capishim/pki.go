@@ -20,7 +20,11 @@ func runPKI(ctx context.Context, stdout, stderr io.Writer, env map[string]string
 		fmt.Fprintf(stderr, "capishim pki: load config: %v\n", err)
 		return exitError
 	}
-	inv, err := pki.Generate(ctx, pki.Config{StateDir: cfg.StateDir, BindAddress: cfg.BindAddress})
+	inv, err := pki.Generate(ctx, pki.Config{
+		StateDir:              cfg.StateDir,
+		BindAddress:           cfg.BindAddress,
+		HypervisorWebhookHost: cfg.HypervisorWebhookHost,
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "capishim pki: generate certificates: %v\n", err)
 		return exitError
