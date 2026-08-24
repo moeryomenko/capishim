@@ -25,9 +25,17 @@ const (
 	// EnvBindAddress overrides the default apiserver bind address.
 	EnvBindAddress = "CAPISHIM_BIND_ADDRESS"
 
+	// EnvHypervisorWebhookHost overrides the hostname the rewritten hypervisor
+	// provider webhook URLs point at (REQ-006).
+	EnvHypervisorWebhookHost = "CAPISHIM_HYPERVISOR_WEBHOOK_HOST"
+
 	// defaultBindAddress is the loopback address the management apiserver
 	// publishes on (REQ-010).
 	defaultBindAddress = "127.0.0.1:6443"
+
+	// defaultHypervisorWebhookHost is the hostname used when
+	// EnvHypervisorWebhookHost is unset or empty (REQ-006, decision D3).
+	defaultHypervisorWebhookHost = "host.containers.internal"
 
 	// stateDirSuffix is the path appended below $HOME (REQ-009).
 	stateDirSuffix = ".local/share/capishim"
@@ -47,14 +55,19 @@ type Config struct {
 	StateDir string
 	// BindAddress is the host:port the management apiserver listens on.
 	BindAddress string
+	// HypervisorWebhookHost is the hostname the rewritten hypervisor provider
+	// webhook URLs point at (REQ-006).
+	HypervisorWebhookHost string
 }
 
 // Load builds a Config from an explicit environment map. The state directory
 // defaults to $HOME/.local/share/capishim and is overridable via EnvStateDir;
 // the bind address defaults to 127.0.0.1:6443 and is overridable via
-// EnvBindAddress. Load returns an error when HOME is unavailable and
-// EnvStateDir is unset, or when the bind address is not a valid host:port
-// with a port in [1, 65535].
+// EnvBindAddress; the hypervisor webhook host defaults to
+// host.containers.internal and is overridable via EnvHypervisorWebhookHost.
+// Load returns an error when HOME is unavailable and EnvStateDir is unset,
+// when the bind address is not a valid host:port with a port in [1, 65535],
+// or when EnvHypervisorWebhookHost is whitespace-only.
 func Load(env map[string]string) (Config, error) {
 	stateDir, err := stateDirFromEnv(env)
 	if err != nil {
@@ -64,7 +77,11 @@ func Load(env map[string]string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{StateDir: stateDir, BindAddress: bind}, nil
+	host, err := hypervisorWebhookHostFromEnv(env)
+	if err != nil {
+		return Config{}, err
+	}
+	return Config{StateDir: stateDir, BindAddress: bind, HypervisorWebhookHost: host}, nil
 }
 
 // stateDirFromEnv resolves the state directory from the environment map:
@@ -100,6 +117,23 @@ func bindAddressFromEnv(env map[string]string) (string, error) {
 		}
 	}
 	return bind, nil
+}
+
+// hypervisorWebhookHostFromEnv resolves the hypervisor webhook host from the
+// environment map: EnvHypervisorWebhookHost wins when set to a non-empty
+// value, with surrounding whitespace trimmed; unset and empty values select
+// the default host.containers.internal (REQ-006). A whitespace-only value is
+// an error.
+func hypervisorWebhookHostFromEnv(env map[string]string) (string, error) {
+	raw, ok := env[EnvHypervisorWebhookHost]
+	if !ok || raw == "" {
+		return defaultHypervisorWebhookHost, nil
+	}
+	host := strings.TrimSpace(raw)
+	if host == "" {
+		return "", fmt.Errorf("config: %s is set but whitespace-only", EnvHypervisorWebhookHost)
+	}
+	return host, nil
 }
 
 // validateBindAddress checks that addr is a host:port pair with a non-empty

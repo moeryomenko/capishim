@@ -23,6 +23,7 @@ func TestComponentsOrder(t *testing.T) {
 		config.ComponentCABPK,
 		config.ComponentKCP,
 		config.ComponentCAPD,
+		config.ComponentHypervisor,
 	}
 	got := config.Components()
 	if len(got) != len(want) {

@@ -3,8 +3,9 @@ package config
 // ComponentID identifies one container in the shim pod.
 type ComponentID string
 
-// The eight components of the shim pod, in boot order: pki, etcd, apiserver,
-// setup, then the four provider managers.
+// The eight in-pod components of the shim pod, in boot order: pki, etcd,
+// apiserver, setup, then the four provider managers, plus the external
+// hypervisor provider manager that runs outside the pod.
 const (
 	// ComponentPKI generates the pod CA, component certs, and SA signing keys.
 	ComponentPKI ComponentID = "pki"
@@ -22,12 +23,18 @@ const (
 	ComponentKCP ComponentID = "kcp"
 	// ComponentCAPD is the Docker provider manager (in-memory backend).
 	ComponentCAPD ComponentID = "capd"
+	// ComponentHypervisor is the external Cloud-Hypervisor infrastructure
+	// provider manager. It runs outside the shim pod, booted by its own CAPH
+	// quadlet unit; only its identity material is produced here (REQ-004).
+	ComponentHypervisor ComponentID = "hypervisor"
 
-	// Webhook listener ports for the four provider managers.
-	webhookPortCore  = 9443
-	webhookPortCABPK = 9444
-	webhookPortKCP   = 9445
-	webhookPortCAPD  = 9446
+	// Webhook listener ports for the four provider managers and the external
+	// hypervisor manager.
+	webhookPortCore       = 9443
+	webhookPortCABPK      = 9444
+	webhookPortKCP        = 9445
+	webhookPortCAPD       = 9446
+	webhookPortHypervisor = 9443
 
 	// Health and diagnostics listener ports for the four provider managers.
 	healthPortCore       = 9451
@@ -66,10 +73,16 @@ type ComponentSpec struct {
 	// Kubeconfig is the manager kubeconfig path relative to the state
 	// directory.
 	Kubeconfig string
+	// External marks a provider manager that runs outside the shim pod in its
+	// own quadlet unit (REQ-004): identity material is minted and RBAC
+	// subjects are rewritten like any other manager, but the quadlet renderer
+	// emits no unit and the e2e driver creates no container for it.
+	External bool
 }
 
 // Components returns all component specs in boot order (pki -> etcd ->
-// apiserver -> setup -> providers). Each call returns a fresh slice, so
+// apiserver -> setup -> providers), with the external hypervisor manager
+// last: it is not booted inside the pod. Each call returns a fresh slice, so
 // mutating a returned spec does not affect later calls.
 func Components() []ComponentSpec {
 	return []ComponentSpec{
@@ -120,6 +133,17 @@ func Components() []ComponentSpec {
 			NamePrefix:        "capd-",
 			ManagerCN:         "capishim:capd-manager",
 			Kubeconfig:        kubeconfigsDir + "/capd.kubeconfig",
+		},
+		{
+			// The external hypervisor manager carries no Image: it is booted
+			// by CAPH's own quadlet unit (REQ-007), never by a capishim
+			// container, and the renderer skips External specs.
+			ID:                ComponentHypervisor,
+			WebhookPort:       webhookPortHypervisor,
+			ProviderNamespace: "hypervisor-system",
+			ManagerCN:         "capishim:hypervisor-manager",
+			Kubeconfig:        kubeconfigsDir + "/hypervisor.kubeconfig",
+			External:          true,
 		},
 	}
 }
