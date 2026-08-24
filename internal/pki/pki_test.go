@@ -28,8 +28,8 @@ const (
 	certPerm          fs.FileMode = 0o644
 	minValidityYears              = 9
 	maxValidityYears              = 11
-	expectedArtifacts             = 14
-	expectedFileCount             = 30
+	expectedArtifacts             = 15
+	expectedFileCount             = 32
 )
 
 // generate runs pki.Generate against a fresh state dir and fails the test on
@@ -281,12 +281,14 @@ func walkFiles(t *testing.T, dir string) []string {
 
 // expectedFiles is the complete, sorted set of files the pki directory must
 // contain after generation: ca, etcd server+client, apiserver serving+client,
-// four manager client pairs, four webhook serving pairs under <comp>-webhook/
-// (tls.crt + tls.key), admin, and the SA signing keypair.
+// four manager client pairs plus the external hypervisor manager client pair,
+// four webhook serving pairs under <comp>-webhook/ (tls.crt + tls.key),
+// admin, and the SA signing keypair.
 func expectedFiles() []string {
 	names := []string{
 		"ca", "etcd-server", "etcd-client", "apiserver", "apiserver-client",
 		"core-manager", "cabpk-manager", "kcp-manager", "capd-manager",
+		"hypervisor-manager",
 		"core-webhook/tls", "cabpk-webhook/tls", "kcp-webhook/tls", "capd-webhook/tls",
 		"admin",
 	}

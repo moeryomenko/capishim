@@ -2,7 +2,9 @@
 // infrastructure: a single pod CA, leaf certificates for etcd,
 // kube-apiserver, the four Cluster API provider managers and their webhook
 // servers, the admin client certificate, and the service-account signing
-// keypair (REQ-002, REQ-009).
+// keypair (REQ-002, REQ-009). It also mints the identity material of the
+// external hypervisor provider manager: its client certificate and the
+// serving pair for its webhook server outside the pod (REQ-004, REQ-005).
 package pki
 
 import (
@@ -47,6 +49,16 @@ const (
 	webhookCertName = "tls.crt"
 	webhookKeyName  = "tls.key"
 
+	// hypervisorWebhookCertsRel is the state-relative directory holding the
+	// external hypervisor provider's webhook serving pair (REQ-005). It lives
+	// outside <state>/pki because the CAPH quadlet mounts exactly this
+	// subtree as the manager's --webhook-cert-dir.
+	hypervisorWebhookCertsRel = "webhook-certs/hypervisor"
+
+	// defaultHypervisorWebhookHost is the baseline pod-network DNS SAN of the
+	// external hypervisor webhook serving certificate (REQ-005, decision D3).
+	defaultHypervisorWebhookHost = "host.containers.internal"
+
 	// keyFileMode is the permission set for every private key file.
 	keyFileMode os.FileMode = 0o600
 	// certFileMode is the permission set for every certificate file.
@@ -74,6 +86,13 @@ type Config struct {
 	// host part feeds the apiserver serving certificate SANs. An empty value
 	// defaults to the loopback address 127.0.0.1.
 	BindAddress string
+
+	// HypervisorWebhookHost is the configured override hostname of the
+	// external hypervisor provider's webhook server (REQ-006). When set, it
+	// joins the serving certificate SANs (REQ-005): an IP literal becomes an
+	// IP SAN, any other value a DNS SAN. An empty value keeps the default SAN
+	// set only.
+	HypervisorWebhookHost string
 }
 
 // Artifact is a certificate and private-key pair on disk.
@@ -91,22 +110,23 @@ type Artifact struct {
 // Inventory is the full certificate inventory written by Generate. Every path
 // lives under <StateDir>/pki/.
 type Inventory struct {
-	CA              Artifact
-	EtcdServer      Artifact
-	EtcdClient      Artifact
-	APIServer       Artifact
-	APIServerClient Artifact
-	CoreManager     Artifact
-	CABPKManager    Artifact
-	KCPManager      Artifact
-	CAPDManager     Artifact
-	CoreWebhook     Artifact
-	CABPKWebhook    Artifact
-	KCPWebhook      Artifact
-	CAPDWebhook     Artifact
-	Admin           Artifact
-	SAPubPath       string
-	SAKeyPath       string
+	CA                Artifact
+	EtcdServer        Artifact
+	EtcdClient        Artifact
+	APIServer         Artifact
+	APIServerClient   Artifact
+	CoreManager       Artifact
+	CABPKManager      Artifact
+	KCPManager        Artifact
+	CAPDManager       Artifact
+	HypervisorManager Artifact
+	CoreWebhook       Artifact
+	CABPKWebhook      Artifact
+	KCPWebhook        Artifact
+	CAPDWebhook       Artifact
+	Admin             Artifact
+	SAPubPath         string
+	SAKeyPath         string
 }
 
 // All returns every artifact pair in a deterministic order, including the CA.
@@ -121,6 +141,7 @@ func (inv *Inventory) All() []Artifact {
 		inv.CABPKManager,
 		inv.KCPManager,
 		inv.CAPDManager,
+		inv.HypervisorManager,
 		inv.CoreWebhook,
 		inv.CABPKWebhook,
 		inv.KCPWebhook,
@@ -197,6 +218,10 @@ func Generate(ctx context.Context, cfg Config) (*Inventory, error) {
 		{artifact: inv.CABPKManager, commonName: "capishim:cabpk-manager", usages: clientAuth},
 		{artifact: inv.KCPManager, commonName: "capishim:kcp-manager", usages: clientAuth},
 		{artifact: inv.CAPDManager, commonName: "capishim:capd-manager", usages: clientAuth},
+		// The external hypervisor manager runs outside the pod; its client
+		// certificate is minted here so setup can write the kubeconfig its
+		// quadlet consumes (REQ-004).
+		{artifact: inv.HypervisorManager, commonName: "capishim:hypervisor-manager", usages: clientAuth},
 		{
 			artifact:    inv.CoreWebhook,
 			commonName:  "capishim:core-webhook",
@@ -227,6 +252,20 @@ func Generate(ctx context.Context, cfg Config) (*Inventory, error) {
 		},
 		{artifact: inv.Admin, commonName: "capishim:admin", usages: clientAuth},
 	}
+
+	// The external hypervisor provider's webhook serving pair lives outside
+	// <state>/pki: the CAPH quadlet mounts its directory directly as the
+	// manager's --webhook-cert-dir (REQ-005).
+	hypervisorWebhookCert, hypervisorWebhookKey := hypervisorWebhookPaths(cfg.StateDir)
+	hypervisorWebhookDNS, hypervisorWebhookIPs := hypervisorWebhookSANs(cfg.HypervisorWebhookHost)
+	leaves = append(leaves, leafSpec{
+		artifact:    Artifact{Name: "hypervisor-webhook", CertPath: hypervisorWebhookCert, KeyPath: hypervisorWebhookKey},
+		commonName:  "capishim:hypervisor-webhook",
+		usages:      serverAuth,
+		dnsNames:    hypervisorWebhookDNS,
+		ipAddresses: hypervisorWebhookIPs,
+	})
+
 	for _, spec := range leaves {
 		if err := ensureLeaf(spec, caCert, caKey, now); err != nil {
 			return nil, err
@@ -268,11 +307,16 @@ func newInventory(dir string) *Inventory {
 		CABPKManager:    artifact("cabpk-manager", "cabpk-manager.crt", "cabpk-manager.key"),
 		KCPManager:      artifact("kcp-manager", "kcp-manager.crt", "kcp-manager.key"),
 		CAPDManager:     artifact("capd-manager", "capd-manager.crt", "capd-manager.key"),
-		CoreWebhook:     webhook("core"),
-		CABPKWebhook:    webhook("cabpk"),
-		KCPWebhook:      webhook("kcp"),
-		CAPDWebhook:     webhook("capd"),
-		Admin:           artifact("admin", "admin.crt", "admin.key"),
+		HypervisorManager: artifact(
+			"hypervisor-manager",
+			"hypervisor-manager.crt",
+			"hypervisor-manager.key",
+		),
+		CoreWebhook:  webhook("core"),
+		CABPKWebhook: webhook("cabpk"),
+		KCPWebhook:   webhook("kcp"),
+		CAPDWebhook:  webhook("capd"),
+		Admin:        artifact("admin", "admin.crt", "admin.key"),
 	}
 }
 
@@ -291,6 +335,32 @@ func bindHost(bindAddress string) (string, error) {
 		return "", fmt.Errorf("invalid bind address %q: empty host", bindAddress)
 	}
 	return host, nil
+}
+
+// hypervisorWebhookPaths returns the serving-certificate and key paths of the
+// external hypervisor provider's webhook server under the given state
+// directory (REQ-005).
+func hypervisorWebhookPaths(stateDir string) (string, string) {
+	dir := filepath.Join(stateDir, hypervisorWebhookCertsRel)
+	return filepath.Join(dir, webhookCertName), filepath.Join(dir, webhookKeyName)
+}
+
+// hypervisorWebhookSANs returns the DNS and IP SANs for the external
+// hypervisor webhook serving certificate (REQ-005): DNS localhost, DNS
+// host.containers.internal, and IP 127.0.0.1, plus the configured override
+// host when it is set to a non-default value. An IP-literal override becomes
+// an IP SAN, any other value a DNS SAN; duplicates are collapsed so an
+// override equal to the default leaves the set unchanged.
+func hypervisorWebhookSANs(override string) ([]string, []net.IP) {
+	dnsNames := []string{"localhost", defaultHypervisorWebhookHost}
+	ipAddresses := []net.IP{net.ParseIP("127.0.0.1")}
+	if override == "" {
+		return dnsNames, ipAddresses
+	}
+	if ip := net.ParseIP(override); ip != nil {
+		return dnsNames, appendUniqueIP(ipAddresses, ip)
+	}
+	return appendUniqueDNS(dnsNames, override), ipAddresses
 }
 
 // apiserverSANs returns the DNS and IP SANs for the apiserver serving
