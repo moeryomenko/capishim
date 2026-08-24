@@ -12,17 +12,19 @@ apiserver (REQ-001, REQ-002).
 
 | File | Source (CAPH checkout) | CAPH commit | Copy date |
 |---|---|---|---|
-| `manifests/infrastructure-hypervisor/provider.yaml` | `out/infrastructure-hypervisor/v0.1.0/infrastructure-components.yaml` (`make components`) | `138ecba882e4d69ff55f9f51935bd199accc7b95` | 2026-08-23 |
-| `manifests/bootstrap-hypervisor/provider.yaml` | `out/bootstrap-hypervisor/v0.1.0/bootstrap-components.yaml` (`make components`) | `138ecba882e4d69ff55f9f51935bd199accc7b95` | 2026-08-23 |
-| `manifests/control-plane-hypervisor/provider.yaml` | `out/control-plane-hypervisor/v0.1.0/control-plane-components.yaml` (`make components`) | `138ecba882e4d69ff55f9f51935bd199accc7b95` | 2026-08-23 |
+| `manifests/infrastructure-hypervisor/provider.yaml` | `out/infrastructure-hypervisor/v0.1.0/infrastructure-components.yaml` (`make components`) | `56d70c26b440e7e4da70e350e0e22c0a36337094` | 2026-08-24 |
+| `manifests/bootstrap-hypervisor/provider.yaml` | `out/bootstrap-hypervisor/v0.1.0/bootstrap-components.yaml` (`make components`) | `56d70c26b440e7e4da70e350e0e22c0a36337094` | 2026-08-24 |
+| `manifests/control-plane-hypervisor/provider.yaml` | `out/control-plane-hypervisor/v0.1.0/control-plane-components.yaml` (`make components`) | `56d70c26b440e7e4da70e350e0e22c0a36337094` | 2026-08-24 |
 
 Release version: `v0.1.0` (CAPH `RELEASE_VERSION`).
 
 All three files carry CAPH's single shared object set and are byte-identical:
-the five hypervisor CRDs (`hypervisorclusters`,
-`hypervisormachines`, `hypervisormachinetemplates` in
-`infrastructure.cluster.x-k8s.io`; `hypervisorconfigs` in
-`bootstrap.cluster.x-k8s.io`; `hypervisorcontrolplanes` in
+the eight hypervisor CRDs (`hypervisorclusters`,
+`hypervisorclustertemplates`, `hypervisormachines`,
+`hypervisormachinetemplates` in `infrastructure.cluster.x-k8s.io`;
+`hypervisorconfigs`, `hypervisorconfigtemplates` in
+`bootstrap.cluster.x-k8s.io`; `hypervisorcontrolplanes`,
+`hypervisorcontrolplanetemplates` in
 `controlplane.cluster.x-k8s.io`), the `hypervisor-system` Namespace,
 ServiceAccount, ClusterRole, ClusterRoleBinding, and the mutating and
 validating webhook configurations with all ten webhook clientConfigs in URL
