@@ -14,6 +14,11 @@
 //   - An empty caPEM is an error whenever a clientConfig would be modified;
 //     configurations with no webhooks are no-ops and return nil.
 //   - A URL-based clientConfig keeps its URL; only caBundle is normalized.
+//     Exception: with the WithExternalWebhookHost option active, a URL whose
+//     authority is 127.0.0.1:<P> or localhost:<P>, where <P> is one of the
+//     option's ports, is rewritten to https://<host>:<P><same-path> (REQ-003,
+//     REQ-006); the transform is idempotent because the rewritten authority
+//     is never a loopback authority.
 //   - RewriteAll resolves the port per webhook from a map keyed by the webhook
 //     service namespace and returns an error for unknown namespaces and
 //     unsupported object kinds.
@@ -22,7 +27,9 @@ package webhookrewrite
 import (
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"strconv"
+	"strings"
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -32,6 +39,42 @@ import (
 // webhookURLPrefix is the scheme and host every rewritten clientConfig points
 // at; the webhook servers listen on loopback localhost (REQ-006).
 const webhookURLPrefix = "https://localhost:"
+
+// Option customizes optional RewriteAll behavior; the empty option set keeps
+// the locked service-based rewrite contract.
+type Option func(*rewriteOptions)
+
+// rewriteOptions carries the resolved RewriteAll option state.
+type rewriteOptions struct {
+	external externalWebhook
+}
+
+// externalWebhook describes the External component webhook that loopback
+// clientConfig URLs are redirected to: the configured host plus the set of
+// External webhook ports whose loopback authorities qualify for rewriting
+// (REQ-003, REQ-004, REQ-006).
+type externalWebhook struct {
+	host  string
+	ports map[int]bool
+}
+
+// active reports whether the URL-form rewrite is enabled.
+func (e externalWebhook) active() bool { return e.host != "" }
+
+// WithExternalWebhookHost activates RewriteAll's URL-form rewrite: any
+// clientConfig.url whose authority is 127.0.0.1:<P> or localhost:<P>, where
+// <P> is one of ports, becomes https://<host>:<P><same-path> with caPEM
+// injected as caBundle (REQ-003, REQ-006). Without this option RewriteAll
+// performs exactly the service-based rewrite.
+func WithExternalWebhookHost(host string, ports ...int) Option {
+	return func(o *rewriteOptions) {
+		o.external.host = host
+		o.external.ports = make(map[int]bool, len(ports))
+		for _, port := range ports {
+			o.external.ports[port] = true
+		}
+	}
+}
 
 // RewriteClientConfig rewrites a single admission webhook clientConfig: a
 // service-based reference becomes url https://localhost:<port><path> (path
@@ -131,21 +174,29 @@ func RewriteCRDConversion(crd *apiextensionsv1.CustomResourceDefinition, port in
 // RewriteAll applies the rewrite to every supported object in objs: mutating
 // and validating webhook configurations and CRD conversion webhooks. The port
 // for each webhook is resolved from ports by the webhook's service namespace;
-// URL-based clientConfigs need no port lookup. An unsupported object kind or
-// a service namespace absent from ports is an error.
-func RewriteAll(objs []runtime.Object, ports map[string]int, caPEM []byte) error {
+// URL-based clientConfigs need no port lookup unless the WithExternalWebhookHost
+// option redirects their loopback authority to the External host (REQ-003).
+// An unsupported object kind or a service namespace absent from ports is an
+// error.
+func RewriteAll(objs []runtime.Object, ports map[string]int, caPEM []byte, opts ...Option) error {
+	options := rewriteOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
 	for _, obj := range objs {
 		switch o := obj.(type) {
 		case *admissionv1.MutatingWebhookConfiguration:
-			if err := rewriteMutatingByNamespace(o, ports, caPEM); err != nil {
+			if err := rewriteMutatingByNamespace(o, ports, caPEM, options.external); err != nil {
 				return err
 			}
 		case *admissionv1.ValidatingWebhookConfiguration:
-			if err := rewriteValidatingByNamespace(o, ports, caPEM); err != nil {
+			if err := rewriteValidatingByNamespace(o, ports, caPEM, options.external); err != nil {
 				return err
 			}
 		case *apiextensionsv1.CustomResourceDefinition:
-			if err := rewriteCRDByNamespace(o, ports, caPEM); err != nil {
+			if err := rewriteCRDByNamespace(o, ports, caPEM, options.external); err != nil {
 				return err
 			}
 		default:
@@ -156,14 +207,24 @@ func RewriteAll(objs []runtime.Object, ports map[string]int, caPEM []byte) error
 }
 
 // rewriteMutatingByNamespace rewrites a mutating webhook configuration,
-// resolving the port per webhook from its service namespace.
+// redirecting matching loopback URLs to the External host first and resolving
+// the remaining webhooks' ports from their service namespace.
 func rewriteMutatingByNamespace(
 	cfg *admissionv1.MutatingWebhookConfiguration,
 	ports map[string]int,
 	caPEM []byte,
+	ext externalWebhook,
 ) error {
 	for i := range cfg.Webhooks {
 		cc := &cfg.Webhooks[i].ClientConfig
+		handled, err := ext.rewriteLoopbackURL(&cc.URL, caPEM)
+		if err != nil {
+			return fmt.Errorf("webhookrewrite: mutating webhook %q: %w", cfg.Webhooks[i].Name, err)
+		}
+		if handled {
+			cc.CABundle = caPEM
+			continue
+		}
 		port, err := portForClientConfig(cc.Service, ports)
 		if err != nil {
 			return fmt.Errorf("webhookrewrite: mutating webhook %q: %w", cfg.Webhooks[i].Name, err)
@@ -176,14 +237,24 @@ func rewriteMutatingByNamespace(
 }
 
 // rewriteValidatingByNamespace rewrites a validating webhook configuration,
-// resolving the port per webhook from its service namespace.
+// redirecting matching loopback URLs to the External host first and resolving
+// the remaining webhooks' ports from their service namespace.
 func rewriteValidatingByNamespace(
 	cfg *admissionv1.ValidatingWebhookConfiguration,
 	ports map[string]int,
 	caPEM []byte,
+	ext externalWebhook,
 ) error {
 	for i := range cfg.Webhooks {
 		cc := &cfg.Webhooks[i].ClientConfig
+		handled, err := ext.rewriteLoopbackURL(&cc.URL, caPEM)
+		if err != nil {
+			return fmt.Errorf("webhookrewrite: validating webhook %q: %w", cfg.Webhooks[i].Name, err)
+		}
+		if handled {
+			cc.CABundle = caPEM
+			continue
+		}
 		port, err := portForClientConfig(cc.Service, ports)
 		if err != nil {
 			return fmt.Errorf("webhookrewrite: validating webhook %q: %w", cfg.Webhooks[i].Name, err)
@@ -195,14 +266,24 @@ func rewriteValidatingByNamespace(
 	return nil
 }
 
-// rewriteCRDByNamespace rewrites the conversion webhook of a CRD, resolving
-// the port from the conversion service namespace.
-func rewriteCRDByNamespace(crd *apiextensionsv1.CustomResourceDefinition, ports map[string]int, caPEM []byte) error {
+// rewriteCRDByNamespace rewrites the conversion webhook of a CRD: a matching
+// loopback URL goes to the External host, otherwise the port is resolved from
+// the conversion service namespace.
+func rewriteCRDByNamespace(crd *apiextensionsv1.CustomResourceDefinition, ports map[string]int, caPEM []byte, ext externalWebhook) error {
 	conv := crd.Spec.Conversion
 	if conv == nil || conv.Webhook == nil || conv.Webhook.ClientConfig == nil {
 		return nil
 	}
-	port, err := portForConversionClientConfig(conv.Webhook.ClientConfig.Service, ports)
+	cc := conv.Webhook.ClientConfig
+	handled, err := ext.rewriteLoopbackURL(&cc.URL, caPEM)
+	if err != nil {
+		return fmt.Errorf("webhookrewrite: CRD %q conversion: %w", crd.Name, err)
+	}
+	if handled {
+		cc.CABundle = caPEM
+		return nil
+	}
+	port, err := portForConversionClientConfig(cc.Service, ports)
 	if err != nil {
 		return fmt.Errorf("webhookrewrite: CRD %q conversion: %w", crd.Name, err)
 	}
@@ -235,4 +316,52 @@ func portForConversionClientConfig(service *apiextensionsv1.ServiceReference, po
 		return 0, fmt.Errorf("no webhook port for service namespace %q", service.Namespace)
 	}
 	return port, nil
+}
+
+// rewriteLoopbackURL rewrites *ccURL in place when it carries a matching
+// loopback authority: a URL of the form <scheme>://127.0.0.1:<P><rest> or
+// <scheme>://localhost:<P><rest>, where <P> is one of the configured External
+// ports, becomes https://<host>:<P><rest> with the path preserved verbatim
+// (an empty path yields no trailing slash). It reports whether the URL was
+// rewritten. Unparseable URLs and non-matching authorities are left untouched;
+// a match with an empty caPEM is an error so the webhook is never left
+// unauthenticated.
+func (e externalWebhook) rewriteLoopbackURL(ccURL **string, caPEM []byte) (bool, error) {
+	if ccURL == nil || *ccURL == nil || !e.active() {
+		return false, nil
+	}
+	parsed, err := neturl.Parse(**ccURL)
+	if err != nil {
+		return false, nil // an unparseable URL is left untouched
+	}
+	port := parsed.Port()
+	if port == "" {
+		return false, nil
+	}
+	portNum, err := strconv.Atoi(port)
+	if err != nil || !e.ports[portNum] {
+		return false, nil
+	}
+	if !isLoopbackAuthority(parsed.Hostname()) {
+		return false, nil
+	}
+	if len(caPEM) == 0 {
+		return false, fmt.Errorf(
+			"webhookrewrite: cannot rewrite loopback url %q to external host %q: pod CA is empty",
+			**ccURL,
+			e.host,
+		)
+	}
+	parsed.Scheme = "https"
+	parsed.Host = e.host + ":" + port
+	rewritten := parsed.String()
+	*ccURL = &rewritten
+	return true, nil
+}
+
+// isLoopbackAuthority reports whether host is one of the loopback authorities
+// REQ-003 lists (127.0.0.1 or localhost), compared case-insensitively per
+// RFC 3986 section 3.2.2.
+func isLoopbackAuthority(host string) bool {
+	return strings.EqualFold(host, "127.0.0.1") || strings.EqualFold(host, "localhost")
 }
