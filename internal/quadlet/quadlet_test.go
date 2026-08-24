@@ -169,10 +169,15 @@ func sectionOf(t *testing.T, unit, key string) string {
 	return ""
 }
 
-// wantUnitNames returns the nine unit filenames the renderer must produce.
+// wantUnitNames returns the nine unit filenames the renderer must produce:
+// the pod plus one container per in-pod component (external specs have no
+// container unit, REQ-004).
 func wantUnitNames() map[string]bool {
 	want := map[string]bool{"capishim.pod": true}
 	for _, spec := range config.Components() {
+		if spec.External {
+			continue
+		}
 		want["capishim-"+string(spec.ID)+".container"] = true
 	}
 	return want
@@ -210,6 +215,9 @@ func TestRenderPodWiring(t *testing.T) {
 	t.Parallel()
 	units := renderWith(t, testVersion, testBind)
 	for _, spec := range config.Components() {
+		if spec.External {
+			continue
+		}
 		name := "capishim-" + string(spec.ID) + ".container"
 		unitContains(t, units[name], "[Container]")
 		if got := unitValue(t, units[name], "Pod"); got != "capishim.pod" {
@@ -344,6 +352,9 @@ func TestRenderOneshotUnits(t *testing.T) {
 		if spec.ID == config.ComponentPKI || spec.ID == config.ComponentSetup {
 			continue
 		}
+		if spec.External {
+			continue
+		}
 		name := "capishim-" + string(spec.ID) + ".container"
 		if strings.Contains(units[name], "Type=oneshot") {
 			t.Errorf("%s must not be a oneshot unit:\n%s", name, units[name])
@@ -396,6 +407,9 @@ func TestRenderImagesMatchComponentTable(t *testing.T) {
 	// Image= lines must equal the table exactly, which uses :v0.1.0.
 	units := renderWith(t, "", testBind)
 	for _, spec := range config.Components() {
+		if spec.External {
+			continue
+		}
 		name := "capishim-" + string(spec.ID) + ".container"
 		if got := unitValue(t, units[name], "Image"); got != spec.Image {
 			t.Errorf("%s Image = %q, want table value %q", name, got, spec.Image)
@@ -417,6 +431,9 @@ func TestRenderImageVersionSubstitution(t *testing.T) {
 			t.Parallel()
 			units := renderWith(t, tt.version, testBind)
 			for _, spec := range config.Components() {
+				if spec.External {
+					continue
+				}
 				name := "capishim-" + string(spec.ID) + ".container"
 				got := unitValue(t, units[name], "Image")
 				want := spec.Image
@@ -463,7 +480,7 @@ func TestRenderVolumes(t *testing.T) {
 	wantIn("capishim-setup.container", mount("pki", true))
 	wantIn("capishim-setup.container", mount("kubeconfigs", false))
 	for _, spec := range config.Components() {
-		if spec.WebhookPort == 0 {
+		if spec.WebhookPort == 0 || spec.External {
 			continue
 		}
 		name := "capishim-" + string(spec.ID) + ".container"

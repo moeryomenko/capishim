@@ -74,8 +74,9 @@ type templateData struct {
 }
 
 // Render renders the full quadlet unit set: the pod unit plus one container
-// unit per component in the config table. The result is keyed by unit
-// filename and is deterministic for a given input.
+// unit per in-pod component in the config table. Specs with External=true
+// have no container unit (REQ-004). The result is keyed by unit filename and
+// is deterministic for a given input.
 func Render(in Input) (map[string]string, error) {
 	if err := validateInput(in); err != nil {
 		return nil, err
@@ -87,6 +88,12 @@ func Render(in Input) (map[string]string, error) {
 	}
 	units[podUnitName] = pod
 	for _, spec := range config.Components() {
+		if spec.External {
+			// External managers boot from their own quadlet units outside the
+			// pod; rendering a capishim-<id>.container for them would
+			// double-boot the provider (REQ-004).
+			continue
+		}
 		name := unitFileName(spec.ID)
 		unit, err := RenderUnit(name, in)
 		if err != nil {
@@ -115,6 +122,9 @@ func RenderUnit(name string, in Input) (string, error) {
 	spec, ok := config.Component(id)
 	if !ok {
 		return "", fmt.Errorf("quadlet: unknown unit %q", name)
+	}
+	if spec.External {
+		return "", fmt.Errorf("quadlet: %q is an external component and has no quadlet unit (REQ-004)", name)
 	}
 	return executeTemplate(unitFileName(spec.ID), unitDataFor(spec, in))
 }
