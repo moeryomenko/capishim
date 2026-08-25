@@ -1,9 +1,10 @@
 // The setup subcommand performs the full management-cluster initialization:
 // it ensures the certificate inventory, waits for the management apiserver,
-// applies the vendored provider CRDs and waits for Established, rewrites and
-// applies the provider RBAC, rewrites and applies the webhook configurations,
-// and writes the manager and admin kubeconfigs. Every step is idempotent so a
-// re-run converges to the same state (REQ-002..REQ-005, REQ-010).
+// applies the vendored provider CRDs restricted to v1beta2 and waits for
+// Established, rewrites and applies the provider RBAC, rewrites and applies
+// the webhook configurations, and writes the manager and admin kubeconfigs.
+// Every step is idempotent so a re-run converges to the same state
+// (REQ-002..REQ-005, REQ-010).
 package main
 
 import (
@@ -106,6 +107,21 @@ const (
 	kindValidatingWebhookConfiguration = "ValidatingWebhookConfiguration"
 )
 
+// servedCAPIVersion is the only Cluster API API version capishim serves:
+// the setup pipeline strips every CAPI core/addons CRD to its v1beta2 entry
+// before apply, because capishim supports only CAPI v1beta2.
+const servedCAPIVersion = "v1beta2"
+
+// capiServedGroups are the Cluster API groups whose CRDs the setup pipeline
+// restricts to servedCAPIVersion: the core and addons groups. The other
+// cluster.x-k8s.io subgroups the vendored trees ship (bootstrap, controlplane,
+// infrastructure, runtime, ipam) are outside the v1beta2-only contract and
+// pass through with their versions and conversion webhooks intact.
+var capiServedGroups = map[string]bool{
+	"cluster.x-k8s.io":        true,
+	"addons.cluster.x-k8s.io": true,
+}
+
 // RBAC binding kinds excluded from the setup container's first apply
 // (REQ-004, VC-01).
 const (
@@ -192,7 +208,11 @@ func setup(ctx context.Context, env map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("load provider manifests: %w", err)
 	}
-	kept := keepObjects(loaded)
+	// The v1beta2 restriction runs on the deduped set before the keep filter:
+	// a CAPI CRD dropped for lacking v1beta2 must then vanish from the apply
+	// batch, the Established wait list, and the webhook rewrite alike, and all
+	// three derive from the single kept set below.
+	kept := keepObjects(RestrictCAPIVersionsToV1Beta2(loaded))
 	if err := manifests.Apply(ctx, dyn, WithoutRBACBindings(kept)); err != nil {
 		return fmt.Errorf("apply provider manifests: %w", err)
 	}
@@ -646,6 +666,79 @@ func WithoutRBACBindings(objs []unstructured.Unstructured) []unstructured.Unstru
 		kept = append(kept, objs[i])
 	}
 	return kept
+}
+
+// RestrictCAPIVersionsToV1Beta2 narrows every CustomResourceDefinition in the
+// Cluster API core and addons groups (capiServedGroups) to serving only its
+// v1beta2 version (servedCAPIVersion) and removes spec.conversion, which a
+// single-version CRD neither needs nor may keep a webhook for. A CAPI CRD
+// whose versions list carries no v1beta2 entry is dropped entirely: there is
+// nothing left to serve. A CAPI CRD whose spec.versions is missing or not a
+// list is malformed and passes through unchanged rather than being guessed
+// at. Every other object — non-CAPI CRDs included — passes through in order
+// and unmodified; the input is not mutated, and the transform is idempotent
+// over its own output.
+func RestrictCAPIVersionsToV1Beta2(objs []unstructured.Unstructured) []unstructured.Unstructured {
+	out := make([]unstructured.Unstructured, 0, len(objs))
+	for i := range objs {
+		obj := &objs[i]
+		if obj.GetKind() != kindCustomResourceDefinition || !capiServedGroups[crdSpecGroup(obj)] {
+			out = append(out, objs[i])
+			continue
+		}
+		versions, wellFormed := crdVersionsList(obj)
+		if !wellFormed {
+			out = append(out, objs[i]) // malformed: pass through unchanged.
+			continue
+		}
+		v1beta2, ok := v1Beta2VersionEntry(versions)
+		if !ok {
+			continue // no v1beta2 to serve: drop the CRD entirely.
+		}
+		restricted := obj.DeepCopy()
+		// spec is known to be a map here: crdSpecGroup read spec.group from
+		// it above, and DeepCopy preserves value types.
+		spec := restricted.Object["spec"].(map[string]interface{})
+		spec["versions"] = []interface{}{v1beta2}
+		delete(spec, "conversion")
+		out = append(out, *restricted)
+	}
+	return out
+}
+
+// crdSpecGroup returns the CRD's spec.group, or "" when unreadable (an
+// unreadable group is never in capiServedGroups, so such an object passes
+// through untouched).
+func crdSpecGroup(crd *unstructured.Unstructured) string {
+	group, _, err := unstructured.NestedString(crd.Object, "spec", "group")
+	if err != nil {
+		return ""
+	}
+	return group
+}
+
+// crdVersionsList returns the CRD's spec.versions entries. The bool is false
+// when spec.versions is absent or not a list, marking the CRD malformed.
+func crdVersionsList(crd *unstructured.Unstructured) ([]interface{}, bool) {
+	raw, found, _ := unstructured.NestedFieldNoCopy(crd.Object, "spec", "versions")
+	versions, ok := raw.([]interface{})
+	return versions, found && ok
+}
+
+// v1Beta2VersionEntry returns the versions entry whose name is
+// servedCAPIVersion. Entries that are not objects are skipped; the bool is
+// false when no entry names servedCAPIVersion.
+func v1Beta2VersionEntry(versions []interface{}) (map[string]interface{}, bool) {
+	for _, v := range versions {
+		entry, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if name, _ := entry["name"].(string); name == servedCAPIVersion {
+			return entry, true
+		}
+	}
+	return nil, false
 }
 
 // keepObjects returns the subset of objs the setup container applies

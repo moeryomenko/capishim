@@ -1235,3 +1235,308 @@ func TestLoadDedupedObjects(t *testing.T) {
 		}
 	})
 }
+
+// The tests below cover the v1beta2-only CRD transform: capishim serves only
+// CAPI v1beta2, so the setup pipeline strips every core/addons-group CAPI CRD
+// to its v1beta2 version and drops the conversion webhook a single-version
+// CRD neither needs nor may keep, while non-CAPI CRDs and all other kinds
+// pass through unchanged.
+
+// crdFixture builds a CustomResourceDefinition fixture for group with one
+// spec.versions entry per versionNames. Each entry carries a schema whose
+// description names its version, so the tests can prove which entry survived
+// and that the dropped schemas vanished with their versions. A webhook
+// conversion is attached when conversion is set.
+func crdFixture(name, group string, versionNames []string, conversion bool) unstructured.Unstructured {
+	versions := make([]interface{}, 0, len(versionNames))
+	for _, v := range versionNames {
+		versions = append(versions, map[string]interface{}{
+			"name":    v,
+			"served":  true,
+			"storage": v == "v1beta2",
+			"schema": map[string]interface{}{
+				"openAPIV3Schema": map[string]interface{}{
+					"description": "schema-of-" + v,
+				},
+			},
+		})
+	}
+	spec := map[string]interface{}{
+		"group": group,
+		"names": map[string]interface{}{"kind": "Cluster", "plural": "clusters"},
+		"scope": "Namespaced",
+	}
+	if versionNames != nil {
+		spec["versions"] = versions
+	}
+	if conversion {
+		spec["conversion"] = map[string]interface{}{
+			"strategy": "Webhook",
+			"webhook": map[string]interface{}{
+				"clientConfig": map[string]interface{}{
+					"service": map[string]interface{}{
+						"name":      "capi-webhook-service",
+						"namespace": "capi-system",
+						"path":      "/convert",
+					},
+				},
+				"conversionReviewVersions": []interface{}{"v1"},
+			},
+		}
+	}
+	return unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata":   map[string]interface{}{"name": name},
+		"spec":       spec,
+	}}
+}
+
+// servedVersions returns the names of the CRD's spec.versions entries in
+// order, or nil when spec.versions is absent or not a list.
+func servedVersions(crd *unstructured.Unstructured) []string {
+	raw, found, _ := unstructured.NestedFieldNoCopy(crd.Object, "spec", "versions")
+	entries, ok := raw.([]interface{})
+	if !found || !ok {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		entry, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if name, _ := entry["name"].(string); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// TestRestrictCAPIVersionsToV1Beta2 covers the v1beta2-only CRD transform end
+// to end: core and addons CAPI CRDs collapse to exactly one served version
+// (v1beta2) with the conversion webhook removed, non-CAPI CRDs and other
+// kinds pass through byte-identically, a CAPI CRD without a v1beta2 entry is
+// dropped entirely, malformed CRDs pass through unchanged, the transform is
+// idempotent over its own output, and the input is never mutated.
+func TestRestrictCAPIVersionsToV1Beta2(t *testing.T) {
+	t.Parallel()
+	coreCluster := crdFixture("clusters.cluster.x-k8s.io", "cluster.x-k8s.io", []string{"v1beta1", "v1beta2"}, true)
+	addonsCRS := crdFixture("clusterresourcesets.addons.cluster.x-k8s.io", "addons.cluster.x-k8s.io", []string{"v1beta1", "v1beta2"}, true)
+	nonCAPI := crdFixture("devclusters.infrastructure.cluster.x-k8s.io", "infrastructure.cluster.x-k8s.io", []string{"v1beta1", "v1beta2"}, true)
+
+	assertV1Beta2Only := func(t *testing.T, got unstructured.Unstructured) {
+		t.Helper()
+		if gotServed := servedVersions(&got); len(gotServed) != 1 || gotServed[0] != "v1beta2" {
+			t.Errorf("served versions = %v, want exactly [v1beta2]", gotServed)
+		}
+		versionsRaw, found, _ := unstructured.NestedFieldNoCopy(got.Object, "spec", "versions")
+		entries, _ := versionsRaw.([]interface{})
+		if !found || len(entries) != 1 {
+			t.Fatalf("spec.versions = %v, want exactly one entry", versionsRaw)
+		}
+		entry, _ := entries[0].(map[string]interface{})
+		schema, _, err := unstructured.NestedString(entry, "schema", "openAPIV3Schema", "description")
+		if err != nil || schema != "schema-of-v1beta2" {
+			t.Errorf("surviving schema description = %q (err %v), want schema-of-v1beta2; dropped versions must take their schemas with them", schema, err)
+		}
+		if _, found, _ := unstructured.NestedFieldNoCopy(got.Object, "spec", "conversion"); found {
+			t.Error("restricted CRD still carries spec.conversion; a single-version CRD needs no conversion webhook")
+		}
+		if kind, _, _ := unstructured.NestedString(got.Object, "spec", "names", "kind"); kind != "Cluster" {
+			t.Errorf("spec.names.kind = %q, want Cluster; unrelated spec fields must survive", kind)
+		}
+	}
+
+	t.Run("core Cluster CRD serves exactly v1beta2 without conversion", func(t *testing.T) {
+		t.Parallel()
+		got := capishim.RestrictCAPIVersionsToV1Beta2([]unstructured.Unstructured{coreCluster})
+		if len(got) != 1 {
+			t.Fatalf("transform returned %d objects, want 1", len(got))
+		}
+		assertV1Beta2Only(t, got[0])
+	})
+
+	t.Run("addons ClusterResourceSet CRD serves exactly v1beta2 without conversion", func(t *testing.T) {
+		t.Parallel()
+		got := capishim.RestrictCAPIVersionsToV1Beta2([]unstructured.Unstructured{addonsCRS})
+		if len(got) != 1 {
+			t.Fatalf("transform returned %d objects, want 1", len(got))
+		}
+		assertV1Beta2Only(t, got[0])
+	})
+
+	t.Run("non-CAPI CRDs and other kinds pass through unchanged", func(t *testing.T) {
+		t.Parallel()
+		namespace := testObj("v1", "Namespace", "capi-system", "")
+		give := []unstructured.Unstructured{coreCluster, nonCAPI, namespace}
+		snapshot, err := json.Marshal(give)
+		if err != nil {
+			t.Fatalf("marshal input: %v", err)
+		}
+		got := capishim.RestrictCAPIVersionsToV1Beta2(give)
+		if len(got) != 3 {
+			t.Fatalf("transform returned %d objects, want 3", len(got))
+		}
+		assertV1Beta2Only(t, got[0])
+		for i, want := range []unstructured.Unstructured{nonCAPI, namespace} {
+			wantData, err := json.Marshal(want.Object)
+			if err != nil {
+				t.Fatalf("marshal want[%d]: %v", i+1, err)
+			}
+			gotData, err := json.Marshal(got[i+1].Object)
+			if err != nil {
+				t.Fatalf("marshal got[%d]: %v", i+1, err)
+			}
+			if string(gotData) != string(wantData) {
+				t.Errorf("object[%d] was modified by the transform:\ngot:  %s\nwant: %s", i+1, gotData, wantData)
+			}
+		}
+		after, err := json.Marshal(give)
+		if err != nil {
+			t.Fatalf("marshal input after call: %v", err)
+		}
+		if !bytes.Equal(snapshot, after) {
+			t.Errorf("RestrictCAPIVersionsToV1Beta2 mutated its input:\nbefore: %s\nafter:  %s", snapshot, after)
+		}
+	})
+
+	t.Run("CAPI CRD without v1beta2 is dropped entirely", func(t *testing.T) {
+		t.Parallel()
+		got := capishim.RestrictCAPIVersionsToV1Beta2([]unstructured.Unstructured{
+			crdFixture("machines.cluster.x-k8s.io", "cluster.x-k8s.io", []string{"v1beta1"}, false),
+			crdFixture("machinehealthchecks.addons.cluster.x-k8s.io", "addons.cluster.x-k8s.io", []string{}, true),
+			coreCluster,
+		})
+		if len(got) != 1 || got[0].GetName() != "clusters.cluster.x-k8s.io" {
+			t.Fatalf("transform returned %v, want only clusters.cluster.x-k8s.io; CRDs without v1beta2 have nothing to serve and must be dropped", capishim.CrdNamesFrom(got))
+		}
+	})
+
+	t.Run("malformed CAPI CRD passes through unchanged", func(t *testing.T) {
+		t.Parallel()
+		badVersionsType := crdFixture("clusters.cluster.x-k8s.io", "cluster.x-k8s.io", nil, false)
+		badVersionsType.Object["spec"].(map[string]interface{})["versions"] = "not-a-list"
+		noSpec := unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "apiextensions.k8s.io/v1",
+			"kind":       "CustomResourceDefinition",
+			"metadata":   map[string]interface{}{"name": "broken.cluster.x-k8s.io"},
+		}}
+		give := []unstructured.Unstructured{badVersionsType, noSpec}
+		snapshot, err := json.Marshal(give)
+		if err != nil {
+			t.Fatalf("marshal input: %v", err)
+		}
+		got := capishim.RestrictCAPIVersionsToV1Beta2(give)
+		if len(got) != 2 {
+			t.Fatalf("transform returned %d objects, want 2 (malformed input passes through)", len(got))
+		}
+		after, err := json.Marshal(got)
+		if err != nil {
+			t.Fatalf("marshal output: %v", err)
+		}
+		if !bytes.Equal(snapshot, after) {
+			t.Errorf("malformed CRDs were modified:\nbefore: %s\nafter:  %s", snapshot, after)
+		}
+	})
+
+	t.Run("idempotent over own output", func(t *testing.T) {
+		t.Parallel()
+		mixed := []unstructured.Unstructured{
+			coreCluster,
+			addonsCRS,
+			nonCAPI,
+			crdFixture("machines.cluster.x-k8s.io", "cluster.x-k8s.io", []string{"v1beta1"}, false),
+		}
+		once := capishim.RestrictCAPIVersionsToV1Beta2(mixed)
+		twice := capishim.RestrictCAPIVersionsToV1Beta2(once)
+		onceData, err := json.Marshal(once)
+		if err != nil {
+			t.Fatalf("marshal first output: %v", err)
+		}
+		twiceData, err := json.Marshal(twice)
+		if err != nil {
+			t.Fatalf("marshal second output: %v", err)
+		}
+		if !bytes.Equal(onceData, twiceData) {
+			t.Errorf("second run changed the output:\nonce:  %s\ntwice: %s", onceData, twiceData)
+		}
+	})
+}
+
+// TestRestrictCAPIVersionsToV1Beta2OnVendoredManifests runs the v1beta2-only
+// transform over the real kept provider objects: every in-scope CAPI CRD
+// (groups cluster.x-k8s.io and addons.cluster.x-k8s.io) must survive serving
+// exactly v1beta2 with no conversion webhook, while every out-of-scope CRD
+// (the bootstrap, controlplane, infrastructure, runtime, and ipam subgroups)
+// must pass through byte-identically with its versions and conversion intact.
+func TestRestrictCAPIVersionsToV1Beta2OnVendoredManifests(t *testing.T) {
+	t.Parallel()
+	kept := loadKept(t)
+	inScope := 0
+	for i := range kept {
+		crd := &kept[i]
+		if crd.GetKind() != "CustomResourceDefinition" {
+			continue
+		}
+		group, _, _ := unstructured.NestedString(crd.Object, "spec", "group")
+		if group != "cluster.x-k8s.io" && group != "addons.cluster.x-k8s.io" {
+			continue
+		}
+		inScope++
+		if got := servedVersions(crd); len(got) < 2 {
+			t.Fatalf("vendored %q serves %v; the fixture must carry multiple versions for this test to be meaningful", crd.GetName(), got)
+		}
+	}
+	if inScope == 0 {
+		t.Fatal("vendored provider manifests carry no in-scope CAPI CRDs; test would be vacuous")
+	}
+	restricted := capishim.RestrictCAPIVersionsToV1Beta2(kept)
+	byName := make(map[string]*unstructured.Unstructured)
+	for i := range restricted {
+		if restricted[i].GetKind() == "CustomResourceDefinition" {
+			byName[restricted[i].GetName()] = &restricted[i]
+		}
+	}
+	outOfScope := 0
+	for i := range kept {
+		crd := &kept[i]
+		if crd.GetKind() != "CustomResourceDefinition" {
+			continue
+		}
+		group, _, _ := unstructured.NestedString(crd.Object, "spec", "group")
+		out := byName[crd.GetName()]
+		if group == "cluster.x-k8s.io" || group == "addons.cluster.x-k8s.io" {
+			if out == nil {
+				t.Errorf("in-scope CRD %q was dropped; every vendored CAPI CRD serves v1beta2 and must survive", crd.GetName())
+				continue
+			}
+			if got := servedVersions(out); len(got) != 1 || got[0] != "v1beta2" {
+				t.Errorf("restricted %q serves %v, want exactly [v1beta2]", crd.GetName(), got)
+			}
+			if _, found, _ := unstructured.NestedFieldNoCopy(out.Object, "spec", "conversion"); found {
+				t.Errorf("restricted %q still carries spec.conversion", crd.GetName())
+			}
+			continue
+		}
+		outOfScope++
+		if out == nil {
+			t.Errorf("out-of-scope CRD %q vanished; only the core and addons groups may be touched", crd.GetName())
+			continue
+		}
+		wantData, err := json.Marshal(crd.Object)
+		if err != nil {
+			t.Fatalf("marshal vendored %s: %v", crd.GetName(), err)
+		}
+		gotData, err := json.Marshal(out.Object)
+		if err != nil {
+			t.Fatalf("marshal restricted %s: %v", out.GetName(), err)
+		}
+		if string(gotData) != string(wantData) {
+			t.Errorf("out-of-scope CRD %q was modified by the transform", crd.GetName())
+		}
+	}
+	if outOfScope == 0 {
+		t.Error("vendored manifests carry no out-of-scope CRDs; scoping is unproven")
+	}
+}
