@@ -16,6 +16,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -1538,5 +1539,228 @@ func TestRestrictCAPIVersionsToV1Beta2OnVendoredManifests(t *testing.T) {
 	}
 	if outOfScope == 0 {
 		t.Error("vendored manifests carry no out-of-scope CRDs; scoping is unproven")
+	}
+}
+
+// The tests below pin the CAPI v1beta2 bootstrap-contract status fields in the
+// vendored bootstrap-hypervisor provider manifest (TASK-010H). CAPH commit
+// ef73a18 added status.initialization.dataSecretCreated/dataSecretName to the
+// hypervisorconfigs CRD; a stale vendored copy prunes the provider's status
+// write and CAPI core never sees the bootstrap data as ready (Machine stuck
+// BootstrapConfigReady=False). The real-file test reads the vendored manifest
+// itself, so a stale re-vendor fails CI instead of silently regressing.
+
+// hypervisorConfigInitializationSchemaProblems inspects the status schema of
+// the hypervisorconfigs.bootstrap.cluster.x-k8s.io CRD and returns one entry
+// per violation of the CAPI v1beta2 bootstrap-contract fields: every served
+// version must declare status.initialization.dataSecretCreated (boolean) and
+// status.initialization.dataSecretName (string). A nil result means the schema
+// is complete.
+func hypervisorConfigInitializationSchemaProblems(crd *unstructured.Unstructured) []string {
+	var problems []string
+	versionsRaw, found, err := unstructured.NestedFieldNoCopy(crd.Object, "spec", "versions")
+	if err != nil || !found {
+		return append(problems, fmt.Sprintf("CRD %q has no spec.versions (err %v); cannot inspect the status schema", crd.GetName(), err))
+	}
+	versions, ok := versionsRaw.([]interface{})
+	if !ok || len(versions) == 0 {
+		return append(problems, fmt.Sprintf("CRD %q spec.versions = %T, want a non-empty list", crd.GetName(), versionsRaw))
+	}
+	for i, v := range versions {
+		entry, ok := v.(map[string]interface{})
+		if !ok {
+			problems = append(problems, fmt.Sprintf("CRD %q version[%d] = %T, want an object", crd.GetName(), i, v))
+			continue
+		}
+		versionName, _, _ := unstructured.NestedString(entry, "name")
+		if versionName == "" {
+			versionName = fmt.Sprintf("version[%d]", i)
+		}
+		initRaw, found, err := unstructured.NestedFieldNoCopy(entry, "schema", "openAPIV3Schema", "properties", "status", "properties", "initialization")
+		if err != nil || !found {
+			problems = append(problems, fmt.Sprintf(
+				"version %q status schema lacks initialization; the vendored CRD is stale (CAPH ef73a18 added status.initialization.dataSecretCreated)",
+				versionName,
+			))
+			continue
+		}
+		initBlock, ok := initRaw.(map[string]interface{})
+		if !ok {
+			problems = append(problems, fmt.Sprintf("version %q status.initialization = %T, want an object", versionName, initRaw))
+			continue
+		}
+		problems = append(problems, checkInitializationField(versionName, initBlock, "dataSecretCreated", "boolean")...)
+		problems = append(problems, checkInitializationField(versionName, initBlock, "dataSecretName", "string")...)
+	}
+	return problems
+}
+
+// checkInitializationField verifies one status.initialization field's schema
+// type and returns a problem entry when the field is absent or typed wrong.
+func checkInitializationField(versionName string, initBlock map[string]interface{}, field, wantType string) []string {
+	raw, found, _ := unstructured.NestedFieldNoCopy(initBlock, "properties", field)
+	if !found {
+		return []string{fmt.Sprintf(
+			"version %q status.initialization lacks %s; the vendored CRD is stale (CAPH ef73a18 added status.initialization.%s)",
+			versionName, field, field,
+		)}
+	}
+	props, ok := raw.(map[string]interface{})
+	if !ok {
+		return []string{fmt.Sprintf("version %q status.initialization.%s = %T, want an object", versionName, field, raw)}
+	}
+	gotType, found, _ := unstructured.NestedString(props, "type")
+	if !found {
+		return []string{fmt.Sprintf("version %q status.initialization.%s has no type", versionName, field)}
+	}
+	if gotType != wantType {
+		return []string{fmt.Sprintf("version %q status.initialization.%s.type = %q, want %q", versionName, field, gotType, wantType)}
+	}
+	return nil
+}
+
+// hypervisorConfigCRDFixture builds a minimal hypervisorconfigs CRD whose
+// single served version carries the given status.initialization block (nil
+// omits the block entirely).
+func hypervisorConfigCRDFixture(initialization map[string]interface{}) unstructured.Unstructured {
+	statusProps := map[string]interface{}{
+		"ready": map[string]interface{}{"type": "boolean"},
+	}
+	if initialization != nil {
+		statusProps["initialization"] = map[string]interface{}{
+			"properties": initialization,
+			"type":       "object",
+		}
+	}
+	return unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata":   map[string]interface{}{"name": "hypervisorconfigs.bootstrap.cluster.x-k8s.io"},
+		"spec": map[string]interface{}{
+			"group": "bootstrap.cluster.x-k8s.io",
+			"names": map[string]interface{}{"kind": "HypervisorConfig", "plural": "hypervisorconfigs"},
+			"scope": "Namespaced",
+			"versions": []interface{}{
+				map[string]interface{}{
+					"name":    "v1alpha1",
+					"served":  true,
+					"storage": true,
+					"schema": map[string]interface{}{
+						"openAPIV3Schema": map[string]interface{}{
+							"properties": map[string]interface{}{
+								"status": map[string]interface{}{
+									"properties": statusProps,
+									"type":       "object",
+								},
+							},
+							"type": "object",
+						},
+					},
+				},
+			},
+		},
+	}}
+}
+
+// TestVendoredHypervisorConfigCRDStatusInitialization reads the REAL vendored
+// bootstrap-hypervisor provider.yaml and asserts its hypervisorconfigs CRD
+// carries the CAPI v1beta2 bootstrap-contract status fields. It fails against
+// the current stale vendored copy (no initialization block) and passes after
+// hack/update-hypervisor-manifests.sh re-vendors from CAPH HEAD (TASK-010I).
+func TestVendoredHypervisorConfigCRDStatusInitialization(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(vendoredManifestsRoot, "bootstrap-hypervisor", "provider.yaml")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("vendored bootstrap-hypervisor manifest %s is missing; re-vendor via hack/update-hypervisor-manifests.sh (TASK-010I): %v", path, err)
+	}
+	loaded, err := manifests.Load(path)
+	if err != nil {
+		t.Fatalf("load vendored bootstrap-hypervisor manifest %s: %v", path, err)
+	}
+	var crd *unstructured.Unstructured
+	for i := range loaded {
+		if loaded[i].GetKind() == "CustomResourceDefinition" && loaded[i].GetName() == "hypervisorconfigs.bootstrap.cluster.x-k8s.io" {
+			crd = &loaded[i]
+			break
+		}
+	}
+	if crd == nil {
+		t.Fatalf("vendored %s contains no hypervisorconfigs.bootstrap.cluster.x-k8s.io CRD; the bootstrap-hypervisor tree is missing or stale", path)
+	}
+	for _, problem := range hypervisorConfigInitializationSchemaProblems(crd) {
+		t.Errorf("vendored hypervisorconfigs CRD: %s", problem)
+	}
+}
+
+// TestHypervisorConfigInitializationSchemaEdgeCases pins the failure modes of
+// the schema assertion with synthetic CRDs: a missing initialization block and
+// wrong-typed fields must be reported, and the correct schema must pass. The
+// real vendored file currently fails on the missing block, so the wrong-type
+// case cannot be observed there; this test makes it deterministic.
+func TestHypervisorConfigInitializationSchemaEdgeCases(t *testing.T) {
+	t.Parallel()
+	correct := map[string]interface{}{
+		"dataSecretCreated": map[string]interface{}{"type": "boolean"},
+		"dataSecretName":    map[string]interface{}{"type": "string"},
+	}
+	tests := []struct {
+		name           string
+		initialization map[string]interface{}
+		wantProblems   []string
+	}{
+		{
+			name:           "initialization block missing",
+			initialization: nil,
+			wantProblems:   []string{"lacks initialization"},
+		},
+		{
+			name: "dataSecretCreated wrong type",
+			initialization: map[string]interface{}{
+				"dataSecretCreated": map[string]interface{}{"type": "string"},
+				"dataSecretName":    map[string]interface{}{"type": "string"},
+			},
+			wantProblems: []string{`dataSecretCreated.type = "string", want "boolean"`},
+		},
+		{
+			name: "dataSecretName wrong type",
+			initialization: map[string]interface{}{
+				"dataSecretCreated": map[string]interface{}{"type": "boolean"},
+				"dataSecretName":    map[string]interface{}{"type": "integer"},
+			},
+			wantProblems: []string{`dataSecretName.type = "integer", want "string"`},
+		},
+		{
+			name:           "correct schema passes",
+			initialization: correct,
+			wantProblems:   nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			crd := hypervisorConfigCRDFixture(tt.initialization)
+			got := hypervisorConfigInitializationSchemaProblems(&crd)
+			if len(tt.wantProblems) == 0 {
+				if len(got) != 0 {
+					t.Errorf("problems = %v, want none", got)
+				}
+				return
+			}
+			if len(got) == 0 {
+				t.Fatalf("no problems reported, want %v", tt.wantProblems)
+			}
+			for _, want := range tt.wantProblems {
+				found := false
+				for _, p := range got {
+					if strings.Contains(p, want) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("problems %v do not contain %q", got, want)
+				}
+			}
+		})
 	}
 }

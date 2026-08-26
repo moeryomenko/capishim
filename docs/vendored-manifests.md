@@ -12,11 +12,19 @@ apiserver (REQ-001, REQ-002).
 
 | File | Source (CAPH checkout) | CAPH commit | Copy date |
 |---|---|---|---|
-| `manifests/infrastructure-hypervisor/provider.yaml` | `out/infrastructure-hypervisor/v0.1.0/infrastructure-components.yaml` (`make components`) | `56d70c26b440e7e4da70e350e0e22c0a36337094` | 2026-08-24 |
-| `manifests/bootstrap-hypervisor/provider.yaml` | `out/bootstrap-hypervisor/v0.1.0/bootstrap-components.yaml` (`make components`) | `56d70c26b440e7e4da70e350e0e22c0a36337094` | 2026-08-24 |
-| `manifests/control-plane-hypervisor/provider.yaml` | `out/control-plane-hypervisor/v0.1.0/control-plane-components.yaml` (`make components`) | `56d70c26b440e7e4da70e350e0e22c0a36337094` | 2026-08-24 |
+| `manifests/infrastructure-hypervisor/provider.yaml` | `out/infrastructure-hypervisor/v0.1.0/infrastructure-components.yaml` (`make components`) | `ef73a18847ab0689e71f29a4ce71c2ac0326a3ec` | 2026-08-27 |
+| `manifests/bootstrap-hypervisor/provider.yaml` | `out/bootstrap-hypervisor/v0.1.0/bootstrap-components.yaml` (`make components`) | `ef73a18847ab0689e71f29a4ce71c2ac0326a3ec` | 2026-08-27 |
+| `manifests/control-plane-hypervisor/provider.yaml` | `out/control-plane-hypervisor/v0.1.0/control-plane-components.yaml` (`make components`) | `ef73a18847ab0689e71f29a4ce71c2ac0326a3ec` | 2026-08-27 |
 
 Release version: `v0.1.0` (CAPH `RELEASE_VERSION`).
+
+### History
+
+| Copy date | CAPH commit | Notes |
+|---|---|---|
+| 2026-08-27 | `ef73a18847ab0689e71f29a4ce71c2ac0326a3ec` | Adds `status.initialization.dataSecretCreated`/`dataSecretName` to the `hypervisorconfigs` CRD (CAPI v1beta2 bootstrap contract). |
+| 2026-08-26 | `0b635eeee13d03985ce7b24941a81f740fc416de` | Adds `status.initialization` (provisioned, controlPlaneInitialized) to the infrastructure/control-plane CRDs and the v1beta2 contract fields. The table previously recorded `56d70c26` here; that commit is the provider quadlet deploy commit, not the manifest source — corrected to the actual refresh source. |
+| 2026-08-24 | `56d70c26b440e7e4da70e350e0e22c0a36337094` | Initial vendoring of the three hypervisor provider trees. |
 
 All three files carry CAPH's single shared object set and are byte-identical:
 the eight hypervisor CRDs (`hypervisorclusters`,
