@@ -24,6 +24,8 @@ import (
 	"github.com/moeryomenko/capishim/internal/pki"
 )
 
+const wantHypervisorCN = "capishim:hypervisor-manager"
+
 // TestManagerCNByNamespaceDerivedFromComponentTable asserts the RBAC rewrite
 // map covers hypervisor-system from the component table entry itself. The
 // failing condition is the absent Components() entry: while only the TASK-005
@@ -33,16 +35,23 @@ func TestManagerCNByNamespaceDerivedFromComponentTable(t *testing.T) {
 	t.Parallel()
 	spec, ok := config.Component(config.ComponentID("hypervisor"))
 	if !ok {
-		t.Fatalf("config.Components() has no hypervisor entry: ManagerCNByNamespace() must derive hypervisor-system from the table (REQ-004 single source of truth), not from the pinned overlay constants alone")
+		t.Fatalf(
+			"config.Components() has no hypervisor entry: ManagerCNByNamespace() must derive hypervisor-system " +
+				"from the table (REQ-004 single source of truth), not from the pinned overlay constants alone",
+		)
 	}
 
 	got := capishim.ManagerCNByNamespace()
-	const wantCN = "capishim:hypervisor-manager"
-	if got["hypervisor-system"] != wantCN {
-		t.Errorf("ManagerCNByNamespace()[%q] = %q, want %q", "hypervisor-system", got["hypervisor-system"], wantCN)
+	if got["hypervisor-system"] != wantHypervisorCN {
+		t.Errorf("ManagerCNByNamespace()[%q] = %q, want %q", "hypervisor-system", got["hypervisor-system"], wantHypervisorCN)
 	}
 	if got[spec.ProviderNamespace] != spec.ManagerCN {
-		t.Errorf("ManagerCNByNamespace()[%q] = %q, want the table value %q", spec.ProviderNamespace, got[spec.ProviderNamespace], spec.ManagerCN)
+		t.Errorf(
+			"ManagerCNByNamespace()[%q] = %q, want the table value %q",
+			spec.ProviderNamespace,
+			got[spec.ProviderNamespace],
+			spec.ManagerCN,
+		)
 	}
 }
 
@@ -62,7 +71,10 @@ func TestManagerArtifactHypervisorManager(t *testing.T) {
 
 	artifact, ok := capishim.ManagerArtifact(config.ComponentID("hypervisor"), inv)
 	if !ok {
-		t.Fatalf("ManagerArtifact(%q) reported not found: setup cannot write the hypervisor manager kubeconfig without its client certificate (REQ-004)", "hypervisor")
+		t.Fatalf(
+			"ManagerArtifact(%q) reported not found: setup cannot write the hypervisor manager kubeconfig without its client certificate (REQ-004)",
+			"hypervisor",
+		)
 	}
 
 	wantCert := filepath.Join(stateDir, "pki", "hypervisor-manager.crt")
@@ -91,7 +103,7 @@ func TestManagerArtifactHypervisorManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse certificate from %s: %v", artifact.CertPath, err)
 	}
-	if got := cert.Subject.CommonName; got != "capishim:hypervisor-manager" {
-		t.Errorf("manager certificate CN = %q, want %q", got, "capishim:hypervisor-manager")
+	if got := cert.Subject.CommonName; got != wantHypervisorCN {
+		t.Errorf("manager certificate CN = %q, want %q", got, wantHypervisorCN)
 	}
 }

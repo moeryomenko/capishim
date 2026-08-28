@@ -99,7 +99,7 @@ func TestSetupRewritePathUsesConfiguredHypervisorHost(t *testing.T) {
 					Name:          "default.hypervisorcluster.infrastructure.cluster.x-k8s.io",
 					FailurePolicy: ptr.To(admissionv1.Fail),
 					ClientConfig: admissionv1.WebhookClientConfig{
-						URL: ptr.To("https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster"),
+						URL: new("https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster"),
 					},
 				}},
 			}
@@ -113,7 +113,7 @@ func TestSetupRewritePathUsesConfiguredHypervisorHost(t *testing.T) {
 					Name:          "validate.hypervisorconfig.bootstrap.cluster.x-k8s.io",
 					FailurePolicy: ptr.To(admissionv1.Fail),
 					ClientConfig: admissionv1.WebhookClientConfig{
-						URL: ptr.To("https://127.0.0.1:9443/validate-bootstrap-cluster-x-k8s-io-v1alpha1-hypervisorconfig"),
+						URL: new("https://127.0.0.1:9443/validate-bootstrap-cluster-x-k8s-io-v1alpha1-hypervisorconfig"),
 					},
 				}},
 			}

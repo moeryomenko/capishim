@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,12 @@ import (
 	"github.com/moeryomenko/capishim/internal/config"
 	"github.com/moeryomenko/capishim/internal/manifests"
 	"github.com/moeryomenko/capishim/internal/pki"
+)
+
+const (
+	kindCRD           = "CustomResourceDefinition"
+	kindRoleBinding   = "RoleBinding"
+	servedCAPIVersion = "v1beta2"
 )
 
 // vendoredManifestsRoot is the repo-relative path to the vendored provider
@@ -311,7 +318,7 @@ func TestCRDNamesPresentInVendoredTemplates(t *testing.T) {
 	kept := loadKept(t)
 	present := make(map[string]bool)
 	for i := range kept {
-		if kept[i].GetKind() == "CustomResourceDefinition" {
+		if kept[i].GetKind() == kindCRD {
 			present[kept[i].GetName()] = true
 		}
 	}
@@ -346,7 +353,7 @@ func TestWebhookRoundTripPreservesVendoredObjects(t *testing.T) {
 	for i := range kept {
 		obj := &kept[i]
 		switch obj.GetKind() {
-		case "CustomResourceDefinition", "MutatingWebhookConfiguration", "ValidatingWebhookConfiguration":
+		case kindCRD, "MutatingWebhookConfiguration", "ValidatingWebhookConfiguration":
 			normalized := obj.DeepCopy()
 			// The typed round trip below emits an empty status object on
 			// CRDs; the apiserver's CRD update strategy replaces any
@@ -399,8 +406,8 @@ func TestWithoutRBACBindings(t *testing.T) {
 			give: []unstructured.Unstructured{
 				bindingTestObj("ClusterRoleBinding", "capi-manager-rolebinding", "", "capi-aggregated-manager-role"),
 				testObj("v1", "Namespace", "capi-system", ""),
-				bindingTestObj("RoleBinding", "capi-leader-election-rolebinding", "capi-system", "capi-leader-election-role"),
-				testObj("apiextensions.k8s.io/v1", "CustomResourceDefinition", "clusters.cluster.x-k8s.io", ""),
+				bindingTestObj(kindRoleBinding, "capi-leader-election-rolebinding", "capi-system", "capi-leader-election-role"),
+				testObj("apiextensions.k8s.io/v1", kindCRD, "clusters.cluster.x-k8s.io", ""),
 				testObj("rbac.authorization.k8s.io/v1", "ClusterRole", "capi-manager-role", ""),
 				testObj("admissionregistration.k8s.io/v1", "MutatingWebhookConfiguration", "capi-webhook", ""),
 				testObj("rbac.authorization.k8s.io/v1", "Role", "capi-manager-role", "capi-system"),
@@ -408,7 +415,7 @@ func TestWithoutRBACBindings(t *testing.T) {
 			},
 			want: []unstructured.Unstructured{
 				testObj("v1", "Namespace", "capi-system", ""),
-				testObj("apiextensions.k8s.io/v1", "CustomResourceDefinition", "clusters.cluster.x-k8s.io", ""),
+				testObj("apiextensions.k8s.io/v1", kindCRD, "clusters.cluster.x-k8s.io", ""),
 				testObj("rbac.authorization.k8s.io/v1", "ClusterRole", "capi-manager-role", ""),
 				testObj("admissionregistration.k8s.io/v1", "MutatingWebhookConfiguration", "capi-webhook", ""),
 				testObj("rbac.authorization.k8s.io/v1", "Role", "capi-manager-role", "capi-system"),
@@ -421,7 +428,7 @@ func TestWithoutRBACBindings(t *testing.T) {
 			name: "only bindings",
 			give: []unstructured.Unstructured{
 				bindingTestObj("ClusterRoleBinding", "capi-manager-rolebinding", "", "capi-aggregated-manager-role"),
-				bindingTestObj("RoleBinding", "capi-leader-election-rolebinding", "capi-system", "capi-leader-election-role"),
+				bindingTestObj(kindRoleBinding, "capi-leader-election-rolebinding", "capi-system", "capi-leader-election-role"),
 			},
 			want: nil,
 		},
@@ -487,7 +494,7 @@ func TestWithoutRBACBindingsOnVendoredManifests(t *testing.T) {
 	bindings := 0
 	for i := range kept {
 		switch kept[i].GetKind() {
-		case "ClusterRoleBinding", "RoleBinding":
+		case "ClusterRoleBinding", kindRoleBinding:
 			bindings++
 		}
 	}
@@ -501,7 +508,7 @@ func TestWithoutRBACBindingsOnVendoredManifests(t *testing.T) {
 	i := 0
 	for j := range kept {
 		switch kept[j].GetKind() {
-		case "ClusterRoleBinding", "RoleBinding":
+		case "ClusterRoleBinding", kindRoleBinding:
 			continue
 		}
 		gotData, err := json.Marshal(got[i].Object)
@@ -526,11 +533,11 @@ func TestWithoutRBACBindingsOnVendoredManifests(t *testing.T) {
 // testObj builds a minimal unstructured object with the given identity for
 // the first-apply filter tests.
 func testObj(apiVersion, kind, name, namespace string) unstructured.Unstructured {
-	meta := map[string]interface{}{"name": name}
+	meta := map[string]any{"name": name}
 	if namespace != "" {
 		meta["namespace"] = namespace
 	}
-	return unstructured.Unstructured{Object: map[string]interface{}{
+	return unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": apiVersion,
 		"kind":       kind,
 		"metadata":   meta,
@@ -543,20 +550,20 @@ func testObj(apiVersion, kind, name, namespace string) unstructured.Unstructured
 func bindingTestObj(kind, name, namespace, roleName string) unstructured.Unstructured {
 	obj := testObj("rbac.authorization.k8s.io/v1", kind, name, namespace)
 	roleKind := "ClusterRole"
-	if kind == "RoleBinding" {
+	if kind == kindRoleBinding {
 		roleKind = "Role"
 	}
 	subjectNamespace := "capi-system"
 	if namespace != "" {
 		subjectNamespace = namespace
 	}
-	obj.Object["roleRef"] = map[string]interface{}{
+	obj.Object["roleRef"] = map[string]any{
 		"apiGroup": "rbac.authorization.k8s.io",
 		"kind":     roleKind,
 		"name":     roleName,
 	}
-	obj.Object["subjects"] = []interface{}{
-		map[string]interface{}{
+	obj.Object["subjects"] = []any{
+		map[string]any{
 			"apiGroup":  "rbac.authorization.k8s.io",
 			"kind":      "ServiceAccount",
 			"name":      "capi-manager",
@@ -765,7 +772,7 @@ metadata:
 `
 
 // hypervisorCRDNames lists the five hypervisor CRDs REQ-002 names.
-var hypervisorCRDNames = []string{
+var hypervisorCRDNames = []string{ //nolint:gochecknoglobals // test fixture
 	"hypervisorclusters.infrastructure.cluster.x-k8s.io",
 	"hypervisormachines.infrastructure.cluster.x-k8s.io",
 	"hypervisormachinetemplates.infrastructure.cluster.x-k8s.io",
@@ -811,13 +818,7 @@ func TestProviderManifestFilesIncludesHypervisorTrees(t *testing.T) {
 		}
 	}
 	for path := range want {
-		found := false
-		for _, gotPath := range got {
-			if gotPath == path {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(got, path)
 		if !found {
 			t.Errorf("ProviderManifestFiles is missing %q (REQ-001)", path)
 		}
@@ -836,9 +837,9 @@ func TestKeepObjectsHypervisorMultiDocManifest(t *testing.T) {
 		hypervisorControlPlaneDocs + "---\n" +
 		"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: hypervisor-system\n---\n" +
 		"apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: hypervisor-manager-role\n---\n" +
-		"apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: hypervisor-manager-rolebinding\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: hypervisor-manager-role\nsubjects:\n- apiGroup: rbac.authorization.k8s.io\n  kind: ServiceAccount\n  name: hypervisor-controller-manager\n  namespace: hypervisor-system\n---\n" +
-		"apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: hypervisor-leader-election-role\n  namespace: hypervisor-system\n"
-	if err := os.WriteFile(path, []byte(docs), 0o644); err != nil {
+		"apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: hypervisor-manager-rolebinding\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: hypervisor-manager-role\nsubjects:\n- apiGroup: rbac.authorization.k8s.io\n  kind: ServiceAccount\n  name: hypervisor-controller-manager\n  namespace: hypervisor-system\n---\n" + //nolint:lll
+		"apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: hypervisor-leader-election-role\n  namespace: hypervisor-system\n" //nolint:lll
+	if err := os.WriteFile(path, []byte(docs), 0o644); err != nil { //nolint:gosec // test fixture in temp dir
 		t.Fatalf("write fixture manifest: %v", err)
 	}
 	loaded, err := manifests.Load(path)
@@ -860,7 +861,7 @@ func TestKeepObjectsHypervisorMultiDocManifest(t *testing.T) {
 	crds := make(map[string]bool)
 	for i := range kept {
 		switch {
-		case kept[i].GetKind() == "CustomResourceDefinition":
+		case kept[i].GetKind() == kindCRD:
 			crds[kept[i].GetName()] = true
 		case kept[i].GetKind() == "Deployment":
 			t.Errorf("Deployment %q survived the keep filter; the manager runs outside the pod (REQ-002)", kept[i].GetName())
@@ -909,7 +910,7 @@ func TestSetupPipelineKeepsHypervisorObjectsFromLoadSet(t *testing.T) {
 	}
 	crds := make(map[string]bool)
 	for i := range kept {
-		if kept[i].GetKind() == "CustomResourceDefinition" {
+		if kept[i].GetKind() == kindCRD {
 			crds[kept[i].GetName()] = true
 		}
 	}
@@ -941,8 +942,8 @@ func TestCRDNamesDerivedFromLoadedManifests(t *testing.T) {
 	t.Parallel()
 	const synthetic = "newskind.example.com"
 	objs := []unstructured.Unstructured{
-		testObj("apiextensions.k8s.io/v1", "CustomResourceDefinition", synthetic, ""),
-		testObj("apiextensions.k8s.io/v1", "CustomResourceDefinition", "clusters.cluster.x-k8s.io", ""),
+		testObj("apiextensions.k8s.io/v1", kindCRD, synthetic, ""),
+		testObj("apiextensions.k8s.io/v1", kindCRD, "clusters.cluster.x-k8s.io", ""),
 		testObj("apps/v1", "Deployment", "hypervisor-controller-manager", "hypervisor-system"),
 	}
 	got := capishim.CrdNamesFrom(objs)
@@ -994,12 +995,12 @@ func TestCRDNamesDerivedFromLoadedManifests(t *testing.T) {
 func TestManagerCNByNamespaceCoversHypervisorSystem(t *testing.T) {
 	t.Parallel()
 	got := capishim.ManagerCNByNamespace()
-	if got["hypervisor-system"] != "capishim:hypervisor-manager" {
+	if got["hypervisor-system"] != wantHypervisorCN {
 		t.Errorf(
 			"ManagerCNByNamespace()[%q] = %q, want %q (REQ-004)",
 			"hypervisor-system",
 			got["hypervisor-system"],
-			"capishim:hypervisor-manager",
+			wantHypervisorCN,
 		)
 	}
 }
@@ -1013,7 +1014,7 @@ func TestManagerCNByNamespaceCoversHypervisorSystem(t *testing.T) {
 func TestRewriteRBACSubjectsHypervisorSystem(t *testing.T) {
 	t.Parallel()
 	binding := bindingTestObj(
-		"RoleBinding",
+		kindRoleBinding,
 		"hypervisor-leader-election-rolebinding",
 		"hypervisor-system",
 		"hypervisor-leader-election-role",
@@ -1026,7 +1027,7 @@ func TestRewriteRBACSubjectsHypervisorSystem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RewriteRBACSubjects returned error: %v", err)
 	}
-	subjects, ok := rewritten[0].Object["subjects"].([]interface{})
+	subjects, ok := rewritten[0].Object["subjects"].([]any)
 	if !ok || len(subjects) != 1 {
 		t.Fatalf(
 			"rewritten binding carries %T subjects (%v), want one rewritten subject",
@@ -1034,7 +1035,7 @@ func TestRewriteRBACSubjectsHypervisorSystem(t *testing.T) {
 			rewritten[0].Object["subjects"],
 		)
 	}
-	subject, ok := subjects[0].(map[string]interface{})
+	subject, ok := subjects[0].(map[string]any)
 	if !ok {
 		t.Fatalf("subject is %T, want an object", subjects[0])
 	}
@@ -1049,20 +1050,20 @@ func TestRewriteRBACSubjectsHypervisorSystem(t *testing.T) {
 		t.Errorf("RewriteRBACSubjects mutated its input:\nbefore: %s\nafter:  %s", snapshot, after)
 	}
 
-	mixed := testObj("rbac.authorization.k8s.io/v1", "RoleBinding", "hypervisor-mixed-rolebinding", "hypervisor-system")
-	mixed.Object["roleRef"] = map[string]interface{}{
+	mixed := testObj("rbac.authorization.k8s.io/v1", kindRoleBinding, "hypervisor-mixed-rolebinding", "hypervisor-system")
+	mixed.Object["roleRef"] = map[string]any{
 		"apiGroup": "rbac.authorization.k8s.io",
 		"kind":     "Role",
 		"name":     "hypervisor-manager-role",
 	}
-	mixed.Object["subjects"] = []interface{}{
-		map[string]interface{}{
+	mixed.Object["subjects"] = []any{
+		map[string]any{
 			"apiGroup":  "rbac.authorization.k8s.io",
 			"kind":      "ServiceAccount",
 			"name":      "hypervisor-controller-manager",
 			"namespace": "hypervisor-system",
 		},
-		map[string]interface{}{
+		map[string]any{
 			"apiGroup":  "rbac.authorization.k8s.io",
 			"kind":      "ServiceAccount",
 			"name":      "capi-manager",
@@ -1073,12 +1074,12 @@ func TestRewriteRBACSubjectsHypervisorSystem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RewriteRBACSubjects(mixed) returned error: %v", err)
 	}
-	subjects, ok = rewritten[0].Object["subjects"].([]interface{})
+	subjects, ok = rewritten[0].Object["subjects"].([]any)
 	if !ok || len(subjects) != 2 {
 		t.Fatalf("rewritten mixed binding carries %v subjects, want two", rewritten[0].Object["subjects"])
 	}
-	first, _ := subjects[0].(map[string]interface{})
-	second, _ := subjects[1].(map[string]interface{})
+	first, _ := subjects[0].(map[string]any)  //nolint:errcheck // test assertion
+	second, _ := subjects[1].(map[string]any) //nolint:errcheck // test assertion
 	if first["name"] != "capishim:hypervisor-manager" {
 		t.Errorf("mixed subject[0] = %v, want User capishim:hypervisor-manager", first)
 	}
@@ -1096,6 +1097,7 @@ func writeProviderTree(t *testing.T, root string, trees map[string]string) {
 		if err := os.MkdirAll(dirPath, 0o755); err != nil {
 			t.Fatalf("create fixture dir %s: %v", dirPath, err)
 		}
+		//nolint:gosec // test fixture in temp dir
 		if err := os.WriteFile(filepath.Join(dirPath, "provider.yaml"), []byte(content), 0o644); err != nil {
 			t.Fatalf("write fixture %s: %v", filepath.Join(dirPath, "provider.yaml"), err)
 		}
@@ -1133,7 +1135,11 @@ func TestLoadDedupedObjects(t *testing.T) {
 			t.Fatalf("deduped to %d objects, want 2 (one shared Namespace plus the distinct one)", len(got))
 		}
 		if got[0].GetName() != "hypervisor-system" || got[1].GetName() != "other-system" {
-			t.Errorf("deduped objects = [%s %s], want first-seen order [hypervisor-system other-system]", got[0].GetName(), got[1].GetName())
+			t.Errorf(
+				"deduped objects = [%s %s], want first-seen order [hypervisor-system other-system]",
+				got[0].GetName(),
+				got[1].GetName(),
+			)
 		}
 	})
 	t.Run("conflicting duplicate errors naming object and sources", func(t *testing.T) {
@@ -1204,7 +1210,10 @@ func TestLoadDedupedObjects(t *testing.T) {
 			}
 		}
 		if len(kept) != 14 {
-			t.Fatalf("kept %d objects after dedupe, want 14 (core Namespace plus 13 applied hypervisor kinds, not 39)", len(kept))
+			t.Fatalf(
+				"kept %d objects after dedupe, want 14 (core Namespace plus 13 applied hypervisor kinds, not 39)",
+				len(kept),
+			)
 		}
 		counts := make(map[string]int)
 		for i := range kept {
@@ -1224,7 +1233,7 @@ func TestLoadDedupedObjects(t *testing.T) {
 				if kept[i].GetName() == "hypervisor-system" {
 					namespaces++
 				}
-			case "CustomResourceDefinition":
+			case kindCRD:
 				crds[kept[i].GetName()]++
 			}
 		}
@@ -1249,46 +1258,46 @@ func TestLoadDedupedObjects(t *testing.T) {
 // and that the dropped schemas vanished with their versions. A webhook
 // conversion is attached when conversion is set.
 func crdFixture(name, group string, versionNames []string, conversion bool) unstructured.Unstructured {
-	versions := make([]interface{}, 0, len(versionNames))
+	versions := make([]any, 0, len(versionNames))
 	for _, v := range versionNames {
-		versions = append(versions, map[string]interface{}{
+		versions = append(versions, map[string]any{
 			"name":    v,
 			"served":  true,
-			"storage": v == "v1beta2",
-			"schema": map[string]interface{}{
-				"openAPIV3Schema": map[string]interface{}{
+			"storage": v == servedCAPIVersion,
+			"schema": map[string]any{
+				"openAPIV3Schema": map[string]any{
 					"description": "schema-of-" + v,
 				},
 			},
 		})
 	}
-	spec := map[string]interface{}{
+	spec := map[string]any{
 		"group": group,
-		"names": map[string]interface{}{"kind": "Cluster", "plural": "clusters"},
+		"names": map[string]any{"kind": "Cluster", "plural": "clusters"},
 		"scope": "Namespaced",
 	}
 	if versionNames != nil {
 		spec["versions"] = versions
 	}
 	if conversion {
-		spec["conversion"] = map[string]interface{}{
+		spec["conversion"] = map[string]any{
 			"strategy": "Webhook",
-			"webhook": map[string]interface{}{
-				"clientConfig": map[string]interface{}{
-					"service": map[string]interface{}{
+			"webhook": map[string]any{
+				"clientConfig": map[string]any{
+					"service": map[string]any{
 						"name":      "capi-webhook-service",
 						"namespace": "capi-system",
 						"path":      "/convert",
 					},
 				},
-				"conversionReviewVersions": []interface{}{"v1"},
+				"conversionReviewVersions": []any{"v1"},
 			},
 		}
 	}
-	return unstructured.Unstructured{Object: map[string]interface{}{
+	return unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apiextensions.k8s.io/v1",
-		"kind":       "CustomResourceDefinition",
-		"metadata":   map[string]interface{}{"name": name},
+		"kind":       kindCRD,
+		"metadata":   map[string]any{"name": name},
 		"spec":       spec,
 	}}
 }
@@ -1296,18 +1305,19 @@ func crdFixture(name, group string, versionNames []string, conversion bool) unst
 // servedVersions returns the names of the CRD's spec.versions entries in
 // order, or nil when spec.versions is absent or not a list.
 func servedVersions(crd *unstructured.Unstructured) []string {
-	raw, found, _ := unstructured.NestedFieldNoCopy(crd.Object, "spec", "versions")
-	entries, ok := raw.([]interface{})
+	raw, found, _ := unstructured.NestedFieldNoCopy(crd.Object, "spec", "versions") //nolint:errcheck // test helper
+	entries, ok := raw.([]any)
 	if !found || !ok {
 		return nil
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		entry, ok := e.(map[string]interface{})
+		entry, ok := e.(map[string]any)
 		if !ok {
 			continue
 		}
-		if name, _ := entry["name"].(string); name != "" {
+		name, _ := entry["name"].(string) //nolint:errcheck // test helper
+		if name != "" {
 			names = append(names, name)
 		}
 	}
@@ -1322,29 +1332,55 @@ func servedVersions(crd *unstructured.Unstructured) []string {
 // idempotent over its own output, and the input is never mutated.
 func TestRestrictCAPIVersionsToV1Beta2(t *testing.T) {
 	t.Parallel()
-	coreCluster := crdFixture("clusters.cluster.x-k8s.io", "cluster.x-k8s.io", []string{"v1beta1", "v1beta2"}, true)
-	addonsCRS := crdFixture("clusterresourcesets.addons.cluster.x-k8s.io", "addons.cluster.x-k8s.io", []string{"v1beta1", "v1beta2"}, true)
-	nonCAPI := crdFixture("devclusters.infrastructure.cluster.x-k8s.io", "infrastructure.cluster.x-k8s.io", []string{"v1beta1", "v1beta2"}, true)
+	coreCluster := crdFixture(
+		"clusters.cluster.x-k8s.io",
+		"cluster.x-k8s.io",
+		[]string{"v1beta1", servedCAPIVersion},
+		true,
+	)
+	addonsCRS := crdFixture(
+		"clusterresourcesets.addons.cluster.x-k8s.io",
+		"addons.cluster.x-k8s.io",
+		[]string{"v1beta1", servedCAPIVersion},
+		true,
+	)
+	nonCAPI := crdFixture(
+		"devclusters.infrastructure.cluster.x-k8s.io",
+		"infrastructure.cluster.x-k8s.io",
+		[]string{"v1beta1", servedCAPIVersion},
+		true,
+	)
 
 	assertV1Beta2Only := func(t *testing.T, got unstructured.Unstructured) {
 		t.Helper()
-		if gotServed := servedVersions(&got); len(gotServed) != 1 || gotServed[0] != "v1beta2" {
+		if gotServed := servedVersions(&got); len(gotServed) != 1 || gotServed[0] != servedCAPIVersion {
 			t.Errorf("served versions = %v, want exactly [v1beta2]", gotServed)
 		}
-		versionsRaw, found, _ := unstructured.NestedFieldNoCopy(got.Object, "spec", "versions")
-		entries, _ := versionsRaw.([]interface{})
+		versionsRaw, found, err := unstructured.NestedFieldNoCopy(
+			got.Object,
+			"spec",
+			"versions",
+		)
+		if err != nil {
+			t.Fatalf("spec.versions: %v", err)
+		}
+		entries, _ := versionsRaw.([]any) //nolint:errcheck // test helper
 		if !found || len(entries) != 1 {
 			t.Fatalf("spec.versions = %v, want exactly one entry", versionsRaw)
 		}
-		entry, _ := entries[0].(map[string]interface{})
+		entry, _ := entries[0].(map[string]any) //nolint:errcheck // test helper
 		schema, _, err := unstructured.NestedString(entry, "schema", "openAPIV3Schema", "description")
 		if err != nil || schema != "schema-of-v1beta2" {
-			t.Errorf("surviving schema description = %q (err %v), want schema-of-v1beta2; dropped versions must take their schemas with them", schema, err)
+			t.Errorf(
+				"surviving schema description = %q (err %v), want schema-of-v1beta2; dropped versions must take their schemas with them",
+				schema,
+				err,
+			)
 		}
-		if _, found, _ := unstructured.NestedFieldNoCopy(got.Object, "spec", "conversion"); found {
+		if _, found, _ := unstructured.NestedFieldNoCopy(got.Object, "spec", "conversion"); found { //nolint:errcheck // test helper
 			t.Error("restricted CRD still carries spec.conversion; a single-version CRD needs no conversion webhook")
 		}
-		if kind, _, _ := unstructured.NestedString(got.Object, "spec", "names", "kind"); kind != "Cluster" {
+		if kind, _, _ := unstructured.NestedString(got.Object, "spec", "names", "kind"); kind != "Cluster" { //nolint:errcheck // test helper
 			t.Errorf("spec.names.kind = %q, want Cluster; unrelated spec fields must survive", kind)
 		}
 	}
@@ -1389,7 +1425,7 @@ func TestRestrictCAPIVersionsToV1Beta2(t *testing.T) {
 			if err != nil {
 				t.Fatalf("marshal got[%d]: %v", i+1, err)
 			}
-			if string(gotData) != string(wantData) {
+			if !bytes.Equal(gotData, wantData) {
 				t.Errorf("object[%d] was modified by the transform:\ngot:  %s\nwant: %s", i+1, gotData, wantData)
 			}
 		}
@@ -1410,18 +1446,22 @@ func TestRestrictCAPIVersionsToV1Beta2(t *testing.T) {
 			coreCluster,
 		})
 		if len(got) != 1 || got[0].GetName() != "clusters.cluster.x-k8s.io" {
-			t.Fatalf("transform returned %v, want only clusters.cluster.x-k8s.io; CRDs without v1beta2 have nothing to serve and must be dropped", capishim.CrdNamesFrom(got))
+			t.Fatalf(
+				"transform returned %v, want only clusters.cluster.x-k8s.io; CRDs without v1beta2 have nothing to serve and must be dropped",
+				capishim.CrdNamesFrom(got),
+			)
 		}
 	})
 
 	t.Run("malformed CAPI CRD passes through unchanged", func(t *testing.T) {
 		t.Parallel()
 		badVersionsType := crdFixture("clusters.cluster.x-k8s.io", "cluster.x-k8s.io", nil, false)
-		badVersionsType.Object["spec"].(map[string]interface{})["versions"] = "not-a-list"
-		noSpec := unstructured.Unstructured{Object: map[string]interface{}{
+		//nolint:errcheck,forcetypeassert // test: intentionally malformed
+		badVersionsType.Object["spec"].(map[string]any)["versions"] = "not-a-list"
+		noSpec := unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "apiextensions.k8s.io/v1",
-			"kind":       "CustomResourceDefinition",
-			"metadata":   map[string]interface{}{"name": "broken.cluster.x-k8s.io"},
+			"kind":       kindCRD,
+			"metadata":   map[string]any{"name": "broken.cluster.x-k8s.io"},
 		}}
 		give := []unstructured.Unstructured{badVersionsType, noSpec}
 		snapshot, err := json.Marshal(give)
@@ -1477,16 +1517,20 @@ func TestRestrictCAPIVersionsToV1Beta2OnVendoredManifests(t *testing.T) {
 	inScope := 0
 	for i := range kept {
 		crd := &kept[i]
-		if crd.GetKind() != "CustomResourceDefinition" {
+		if crd.GetKind() != kindCRD {
 			continue
 		}
-		group, _, _ := unstructured.NestedString(crd.Object, "spec", "group")
+		group, _, _ := unstructured.NestedString(crd.Object, "spec", "group") //nolint:errcheck // test helper
 		if group != "cluster.x-k8s.io" && group != "addons.cluster.x-k8s.io" {
 			continue
 		}
 		inScope++
 		if got := servedVersions(crd); len(got) < 2 {
-			t.Fatalf("vendored %q serves %v; the fixture must carry multiple versions for this test to be meaningful", crd.GetName(), got)
+			t.Fatalf(
+				"vendored %q serves %v; the fixture must carry multiple versions for this test to be meaningful",
+				crd.GetName(),
+				got,
+			)
 		}
 	}
 	if inScope == 0 {
@@ -1495,27 +1539,27 @@ func TestRestrictCAPIVersionsToV1Beta2OnVendoredManifests(t *testing.T) {
 	restricted := capishim.RestrictCAPIVersionsToV1Beta2(kept)
 	byName := make(map[string]*unstructured.Unstructured)
 	for i := range restricted {
-		if restricted[i].GetKind() == "CustomResourceDefinition" {
+		if restricted[i].GetKind() == kindCRD {
 			byName[restricted[i].GetName()] = &restricted[i]
 		}
 	}
 	outOfScope := 0
 	for i := range kept {
 		crd := &kept[i]
-		if crd.GetKind() != "CustomResourceDefinition" {
+		if crd.GetKind() != kindCRD {
 			continue
 		}
-		group, _, _ := unstructured.NestedString(crd.Object, "spec", "group")
+		group, _, _ := unstructured.NestedString(crd.Object, "spec", "group") //nolint:errcheck // test helper
 		out := byName[crd.GetName()]
 		if group == "cluster.x-k8s.io" || group == "addons.cluster.x-k8s.io" {
 			if out == nil {
 				t.Errorf("in-scope CRD %q was dropped; every vendored CAPI CRD serves v1beta2 and must survive", crd.GetName())
 				continue
 			}
-			if got := servedVersions(out); len(got) != 1 || got[0] != "v1beta2" {
+			if got := servedVersions(out); len(got) != 1 || got[0] != servedCAPIVersion {
 				t.Errorf("restricted %q serves %v, want exactly [v1beta2]", crd.GetName(), got)
 			}
-			if _, found, _ := unstructured.NestedFieldNoCopy(out.Object, "spec", "conversion"); found {
+			if _, found, _ := unstructured.NestedFieldNoCopy(out.Object, "spec", "conversion"); found { //nolint:errcheck // test helper
 				t.Errorf("restricted %q still carries spec.conversion", crd.GetName())
 			}
 			continue
@@ -1533,7 +1577,7 @@ func TestRestrictCAPIVersionsToV1Beta2OnVendoredManifests(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal restricted %s: %v", out.GetName(), err)
 		}
-		if string(gotData) != string(wantData) {
+		if !bytes.Equal(gotData, wantData) {
 			t.Errorf("out-of-scope CRD %q was modified by the transform", crd.GetName())
 		}
 	}
@@ -1560,23 +1604,34 @@ func hypervisorConfigInitializationSchemaProblems(crd *unstructured.Unstructured
 	var problems []string
 	versionsRaw, found, err := unstructured.NestedFieldNoCopy(crd.Object, "spec", "versions")
 	if err != nil || !found {
-		return append(problems, fmt.Sprintf("CRD %q has no spec.versions (err %v); cannot inspect the status schema", crd.GetName(), err))
+		return append(
+			problems,
+			fmt.Sprintf("CRD %q has no spec.versions (err %v); cannot inspect the status schema", crd.GetName(), err),
+		)
 	}
-	versions, ok := versionsRaw.([]interface{})
+	versions, ok := versionsRaw.([]any)
 	if !ok || len(versions) == 0 {
 		return append(problems, fmt.Sprintf("CRD %q spec.versions = %T, want a non-empty list", crd.GetName(), versionsRaw))
 	}
 	for i, v := range versions {
-		entry, ok := v.(map[string]interface{})
+		entry, ok := v.(map[string]any)
 		if !ok {
 			problems = append(problems, fmt.Sprintf("CRD %q version[%d] = %T, want an object", crd.GetName(), i, v))
 			continue
 		}
-		versionName, _, _ := unstructured.NestedString(entry, "name")
+		versionName, _, _ := unstructured.NestedString(entry, "name") //nolint:errcheck // test helper
 		if versionName == "" {
 			versionName = fmt.Sprintf("version[%d]", i)
 		}
-		initRaw, found, err := unstructured.NestedFieldNoCopy(entry, "schema", "openAPIV3Schema", "properties", "status", "properties", "initialization")
+		initRaw, found, err := unstructured.NestedFieldNoCopy(
+			entry,
+			"schema",
+			"openAPIV3Schema",
+			"properties",
+			"status",
+			"properties",
+			"initialization",
+		)
 		if err != nil || !found {
 			problems = append(problems, fmt.Sprintf(
 				"version %q status schema lacks initialization; the vendored CRD is stale (CAPH ef73a18 added status.initialization.dataSecretCreated)",
@@ -1584,9 +1639,12 @@ func hypervisorConfigInitializationSchemaProblems(crd *unstructured.Unstructured
 			))
 			continue
 		}
-		initBlock, ok := initRaw.(map[string]interface{})
+		initBlock, ok := initRaw.(map[string]any)
 		if !ok {
-			problems = append(problems, fmt.Sprintf("version %q status.initialization = %T, want an object", versionName, initRaw))
+			problems = append(
+				problems,
+				fmt.Sprintf("version %q status.initialization = %T, want an object", versionName, initRaw),
+			)
 			continue
 		}
 		problems = append(problems, checkInitializationField(versionName, initBlock, "dataSecretCreated", "boolean")...)
@@ -1597,24 +1655,26 @@ func hypervisorConfigInitializationSchemaProblems(crd *unstructured.Unstructured
 
 // checkInitializationField verifies one status.initialization field's schema
 // type and returns a problem entry when the field is absent or typed wrong.
-func checkInitializationField(versionName string, initBlock map[string]interface{}, field, wantType string) []string {
-	raw, found, _ := unstructured.NestedFieldNoCopy(initBlock, "properties", field)
+func checkInitializationField(versionName string, initBlock map[string]any, field, wantType string) []string {
+	raw, found, _ := unstructured.NestedFieldNoCopy(initBlock, "properties", field) //nolint:errcheck // test helper
 	if !found {
 		return []string{fmt.Sprintf(
 			"version %q status.initialization lacks %s; the vendored CRD is stale (CAPH ef73a18 added status.initialization.%s)",
 			versionName, field, field,
 		)}
 	}
-	props, ok := raw.(map[string]interface{})
+	props, ok := raw.(map[string]any)
 	if !ok {
 		return []string{fmt.Sprintf("version %q status.initialization.%s = %T, want an object", versionName, field, raw)}
 	}
-	gotType, found, _ := unstructured.NestedString(props, "type")
+	gotType, found, _ := unstructured.NestedString(props, "type") //nolint:errcheck // test helper
 	if !found {
 		return []string{fmt.Sprintf("version %q status.initialization.%s has no type", versionName, field)}
 	}
 	if gotType != wantType {
-		return []string{fmt.Sprintf("version %q status.initialization.%s.type = %q, want %q", versionName, field, gotType, wantType)}
+		return []string{
+			fmt.Sprintf("version %q status.initialization.%s.type = %q, want %q", versionName, field, gotType, wantType),
+		}
 	}
 	return nil
 }
@@ -1622,33 +1682,33 @@ func checkInitializationField(versionName string, initBlock map[string]interface
 // hypervisorConfigCRDFixture builds a minimal hypervisorconfigs CRD whose
 // single served version carries the given status.initialization block (nil
 // omits the block entirely).
-func hypervisorConfigCRDFixture(initialization map[string]interface{}) unstructured.Unstructured {
-	statusProps := map[string]interface{}{
-		"ready": map[string]interface{}{"type": "boolean"},
+func hypervisorConfigCRDFixture(initialization map[string]any) unstructured.Unstructured {
+	statusProps := map[string]any{
+		"ready": map[string]any{"type": "boolean"},
 	}
 	if initialization != nil {
-		statusProps["initialization"] = map[string]interface{}{
+		statusProps["initialization"] = map[string]any{
 			"properties": initialization,
 			"type":       "object",
 		}
 	}
-	return unstructured.Unstructured{Object: map[string]interface{}{
+	return unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apiextensions.k8s.io/v1",
-		"kind":       "CustomResourceDefinition",
-		"metadata":   map[string]interface{}{"name": "hypervisorconfigs.bootstrap.cluster.x-k8s.io"},
-		"spec": map[string]interface{}{
+		"kind":       kindCRD,
+		"metadata":   map[string]any{"name": "hypervisorconfigs.bootstrap.cluster.x-k8s.io"},
+		"spec": map[string]any{
 			"group": "bootstrap.cluster.x-k8s.io",
-			"names": map[string]interface{}{"kind": "HypervisorConfig", "plural": "hypervisorconfigs"},
+			"names": map[string]any{"kind": "HypervisorConfig", "plural": "hypervisorconfigs"},
 			"scope": "Namespaced",
-			"versions": []interface{}{
-				map[string]interface{}{
+			"versions": []any{
+				map[string]any{
 					"name":    "v1alpha1",
 					"served":  true,
 					"storage": true,
-					"schema": map[string]interface{}{
-						"openAPIV3Schema": map[string]interface{}{
-							"properties": map[string]interface{}{
-								"status": map[string]interface{}{
+					"schema": map[string]any{
+						"openAPIV3Schema": map[string]any{
+							"properties": map[string]any{
+								"status": map[string]any{
 									"properties": statusProps,
 									"type":       "object",
 								},
@@ -1671,7 +1731,11 @@ func TestVendoredHypervisorConfigCRDStatusInitialization(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(vendoredManifestsRoot, "bootstrap-hypervisor", "provider.yaml")
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("vendored bootstrap-hypervisor manifest %s is missing; re-vendor via hack/update-hypervisor-manifests.sh (TASK-010I): %v", path, err)
+		t.Fatalf(
+			"vendored bootstrap-hypervisor manifest %s is missing; re-vendor via hack/update-hypervisor-manifests.sh (TASK-010I): %v",
+			path,
+			err,
+		)
 	}
 	loaded, err := manifests.Load(path)
 	if err != nil {
@@ -1679,13 +1743,17 @@ func TestVendoredHypervisorConfigCRDStatusInitialization(t *testing.T) {
 	}
 	var crd *unstructured.Unstructured
 	for i := range loaded {
-		if loaded[i].GetKind() == "CustomResourceDefinition" && loaded[i].GetName() == "hypervisorconfigs.bootstrap.cluster.x-k8s.io" {
+		if loaded[i].GetKind() == kindCRD &&
+			loaded[i].GetName() == "hypervisorconfigs.bootstrap.cluster.x-k8s.io" {
 			crd = &loaded[i]
 			break
 		}
 	}
 	if crd == nil {
-		t.Fatalf("vendored %s contains no hypervisorconfigs.bootstrap.cluster.x-k8s.io CRD; the bootstrap-hypervisor tree is missing or stale", path)
+		t.Fatalf(
+			"vendored %s contains no hypervisorconfigs.bootstrap.cluster.x-k8s.io CRD; the bootstrap-hypervisor tree is missing or stale",
+			path,
+		)
 	}
 	for _, problem := range hypervisorConfigInitializationSchemaProblems(crd) {
 		t.Errorf("vendored hypervisorconfigs CRD: %s", problem)
@@ -1699,13 +1767,13 @@ func TestVendoredHypervisorConfigCRDStatusInitialization(t *testing.T) {
 // case cannot be observed there; this test makes it deterministic.
 func TestHypervisorConfigInitializationSchemaEdgeCases(t *testing.T) {
 	t.Parallel()
-	correct := map[string]interface{}{
-		"dataSecretCreated": map[string]interface{}{"type": "boolean"},
-		"dataSecretName":    map[string]interface{}{"type": "string"},
+	correct := map[string]any{
+		"dataSecretCreated": map[string]any{"type": "boolean"},
+		"dataSecretName":    map[string]any{"type": "string"},
 	}
 	tests := []struct {
 		name           string
-		initialization map[string]interface{}
+		initialization map[string]any
 		wantProblems   []string
 	}{
 		{
@@ -1715,17 +1783,17 @@ func TestHypervisorConfigInitializationSchemaEdgeCases(t *testing.T) {
 		},
 		{
 			name: "dataSecretCreated wrong type",
-			initialization: map[string]interface{}{
-				"dataSecretCreated": map[string]interface{}{"type": "string"},
-				"dataSecretName":    map[string]interface{}{"type": "string"},
+			initialization: map[string]any{
+				"dataSecretCreated": map[string]any{"type": "string"},
+				"dataSecretName":    map[string]any{"type": "string"},
 			},
 			wantProblems: []string{`dataSecretCreated.type = "string", want "boolean"`},
 		},
 		{
 			name: "dataSecretName wrong type",
-			initialization: map[string]interface{}{
-				"dataSecretCreated": map[string]interface{}{"type": "boolean"},
-				"dataSecretName":    map[string]interface{}{"type": "integer"},
+			initialization: map[string]any{
+				"dataSecretCreated": map[string]any{"type": "boolean"},
+				"dataSecretName":    map[string]any{"type": "integer"},
 			},
 			wantProblems: []string{`dataSecretName.type = "integer", want "string"`},
 		},
