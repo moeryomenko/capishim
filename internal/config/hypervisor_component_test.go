@@ -27,7 +27,10 @@ func TestComponentHypervisorSpec(t *testing.T) {
 	t.Parallel()
 	spec, ok := config.Component(config.ComponentHypervisor)
 	if !ok {
-		t.Fatalf("Component(%q) not found: Components() must expose the external hypervisor manager entry (REQ-004)", config.ComponentHypervisor)
+		t.Fatalf(
+			"Component(%q) not found: Components() must expose the external hypervisor manager entry (REQ-004)",
+			config.ComponentHypervisor,
+		)
 	}
 	if spec.ID != config.ComponentHypervisor {
 		t.Errorf("spec.ID = %q, want %q", spec.ID, config.ComponentHypervisor)
@@ -48,7 +51,10 @@ func TestComponentHypervisorSpec(t *testing.T) {
 		t.Errorf("spec.Kubeconfig = %q, want %q (REQ-004)", spec.Kubeconfig, "kubeconfigs/hypervisor.kubeconfig")
 	}
 	if spec.Image != "" {
-		t.Errorf("spec.Image = %q, want an empty reference: the external manager is booted by the CAPH quadlet (REQ-007), not by a capishim image", spec.Image)
+		t.Errorf(
+			"spec.Image = %q, want an empty reference: the external manager is booted by the CAPH quadlet (REQ-007), not by a capishim image",
+			spec.Image,
+		)
 	}
 }
 
@@ -77,7 +83,11 @@ func TestConfigKubeconfigPathHypervisor(t *testing.T) {
 	got, ok := cfg.KubeconfigPath(config.ComponentHypervisor)
 	want := filepath.Join("/srv/capishim", "kubeconfigs", "hypervisor.kubeconfig")
 	if !ok {
-		t.Fatalf("KubeconfigPath(%q) reported ok=false, want the hypervisor kubeconfig path %q", config.ComponentHypervisor, want)
+		t.Fatalf(
+			"KubeconfigPath(%q) reported ok=false, want the hypervisor kubeconfig path %q",
+			config.ComponentHypervisor,
+			want,
+		)
 	}
 	if got != want {
 		t.Errorf("KubeconfigPath(%q) = %q, want %q", config.ComponentHypervisor, got, want)

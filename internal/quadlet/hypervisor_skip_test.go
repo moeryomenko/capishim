@@ -17,7 +17,7 @@ import (
 
 // inPodComponentIDs lists the eight components that keep their container
 // units: everything in the table except the external hypervisor manager.
-var inPodComponentIDs = []config.ComponentID{
+var inPodComponentIDs = []config.ComponentID{ //nolint:gochecknoglobals // test fixture
 	config.ComponentPKI,
 	config.ComponentEtcd,
 	config.ComponentAPIServer,
@@ -36,7 +36,10 @@ func TestRenderSkipsExternalHypervisor(t *testing.T) {
 	t.Parallel()
 	spec, ok := config.Component(config.ComponentHypervisor)
 	if !ok {
-		t.Fatalf("config.Component(%q) not found: the skip path needs the table entry to exist before it can be exercised (REQ-004)", config.ComponentHypervisor)
+		t.Fatalf(
+			"config.Component(%q) not found: the skip path needs the table entry to exist before it can be exercised (REQ-004)",
+			config.ComponentHypervisor,
+		)
 	}
 	if !spec.External {
 		t.Fatalf("hypervisor spec External = false, want true: only External specs are skipped")
@@ -46,12 +49,19 @@ func TestRenderSkipsExternalHypervisor(t *testing.T) {
 
 	hypervisorUnit := "capishim-" + string(config.ComponentHypervisor) + ".container"
 	if _, emitted := units[hypervisorUnit]; emitted {
-		t.Errorf("Render emitted %s for an External spec; render-quadlet must not produce a unit for it (REQ-004)\n---\n%s\n---", hypervisorUnit, units[hypervisorUnit])
+		t.Errorf(
+			"Render emitted %s for an External spec; render-quadlet must not produce a unit for it (REQ-004)\n---\n%s\n---",
+			hypervisorUnit,
+			units[hypervisorUnit],
+		)
 	}
 	for _, id := range inPodComponentIDs {
 		name := "capishim-" + string(id) + ".container"
 		if _, ok := units[name]; !ok {
-			t.Errorf("Render output missing existing unit %q: skipping External specs must not disturb the eight in-pod units", name)
+			t.Errorf(
+				"Render output missing existing unit %q: skipping External specs must not disturb the eight in-pod units",
+				name,
+			)
 		}
 	}
 	if _, ok := units["capishim.pod"]; !ok {
@@ -71,6 +81,10 @@ func TestRenderUnitRejectsHypervisorUnitName(t *testing.T) {
 	in := quadlet.Input{Config: config.Config{StateDir: testStateDir, BindAddress: testBind}, Version: testVersion}
 	name := "capishim-" + string(config.ComponentHypervisor) + ".container"
 	if unit, err := quadlet.RenderUnit(name, in); err == nil {
-		t.Errorf("RenderUnit(%q) returned no error and rendered:\n%s\n---\nwant an error: external components have no quadlet unit (REQ-004)", name, unit)
+		t.Errorf(
+			"RenderUnit(%q) returned no error and rendered:\n%s\n---\nwant an error: external components have no quadlet unit (REQ-004)",
+			name,
+			unit,
+		)
 	}
 }

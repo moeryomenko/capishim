@@ -46,7 +46,7 @@ func mutatingWithURL(name, url string) *admissionv1.MutatingWebhookConfiguration
 			{
 				Name:          "default.hypervisorcluster.infrastructure.cluster.x-k8s.io",
 				FailurePolicy: ptr.To(admissionv1.Fail),
-				ClientConfig:  admissionv1.WebhookClientConfig{URL: ptr.To(url)},
+				ClientConfig:  admissionv1.WebhookClientConfig{URL: new(url)},
 			},
 		},
 	}
@@ -114,9 +114,18 @@ func TestRewriteAllLeavesNonMatchingURLsUntouched(t *testing.T) {
 		name    string
 		giveURL string
 	}{
-		{name: "different host same port", giveURL: "https://example.com:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster"},
-		{name: "loopback host different port", giveURL: "https://127.0.0.1:9999/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster"},
-		{name: "localhost in-pod manager port", giveURL: "https://localhost:9444/validate-bootstrap-cluster-x-k8s-io-v1beta2-kubeadmconfig"},
+		{
+			name:    "different host same port",
+			giveURL: "https://example.com:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster",
+		},
+		{
+			name:    "loopback host different port",
+			giveURL: "https://127.0.0.1:9999/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster",
+		},
+		{
+			name:    "localhost in-pod manager port",
+			giveURL: "https://localhost:9444/validate-bootstrap-cluster-x-k8s-io-v1beta2-kubeadmconfig",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -143,7 +152,10 @@ func TestRewriteAllLeavesNonMatchingURLsUntouched(t *testing.T) {
 func TestRewriteAllUsesConfiguredHostFromOption(t *testing.T) {
 	t.Parallel()
 	ca := podCA(t)
-	cfg := mutatingWithURL("hypervisor-mutating-webhook-configuration", "https://127.0.0.1:9443/mutate-bootstrap-cluster-x-k8s-io-v1alpha1-hypervisorconfig")
+	cfg := mutatingWithURL(
+		"hypervisor-mutating-webhook-configuration",
+		"https://127.0.0.1:9443/mutate-bootstrap-cluster-x-k8s-io-v1alpha1-hypervisorconfig",
+	)
 	if err := webhookrewrite.RewriteAll(
 		[]runtime.Object{cfg},
 		map[string]int{"hypervisor-system": 9443},
@@ -164,8 +176,14 @@ func TestRewriteAllUsesConfiguredHostFromOption(t *testing.T) {
 func TestRewriteAllMatchesEveryConfiguredExternalPort(t *testing.T) {
 	t.Parallel()
 	ca := podCA(t)
-	matched := mutatingWithURL("hypervisor-mutating-webhook-configuration", "https://127.0.0.1:9543/mutate-controlplane-cluster-x-k8s-io-v1alpha1-hypervisorcontrolplane")
-	unmatched := mutatingWithURL("other-mutating-webhook-configuration", "https://127.0.0.1:9444/validate-bootstrap-cluster-x-k8s-io-v1beta2-kubeadmconfig")
+	matched := mutatingWithURL(
+		"hypervisor-mutating-webhook-configuration",
+		"https://127.0.0.1:9543/mutate-controlplane-cluster-x-k8s-io-v1alpha1-hypervisorcontrolplane",
+	)
+	unmatched := mutatingWithURL(
+		"other-mutating-webhook-configuration",
+		"https://127.0.0.1:9444/validate-bootstrap-cluster-x-k8s-io-v1beta2-kubeadmconfig",
+	)
 	objs := []runtime.Object{matched, unmatched}
 	if err := webhookrewrite.RewriteAll(
 		objs,
@@ -206,7 +224,7 @@ func TestRewriteAllServiceRewriteUnchangedWithHostOption(t *testing.T) {
 			{
 				Name: "default.hypervisorcluster.infrastructure.cluster.x-k8s.io",
 				ClientConfig: admissionv1.WebhookClientConfig{
-					URL: ptr.To("https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster"),
+					URL: new("https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster"),
 				},
 			},
 		},
@@ -225,8 +243,12 @@ func TestRewriteAllServiceRewriteUnchangedWithHostOption(t *testing.T) {
 		t.Fatalf("RewriteAll() error = %v", err)
 	}
 	serviceURL := cfg.Webhooks[0].ClientConfig.URL
-	if serviceURL == nil || *serviceURL != "https://localhost:9444/mutate-bootstrap-cluster-x-k8s-io-v1beta2-kubeadmconfig" {
-		t.Errorf("service-based URL = %v, want https://localhost:9444/mutate-bootstrap-cluster-x-k8s-io-v1beta2-kubeadmconfig", serviceURL)
+	if serviceURL == nil ||
+		*serviceURL != "https://localhost:9444/mutate-bootstrap-cluster-x-k8s-io-v1beta2-kubeadmconfig" {
+		t.Errorf(
+			"service-based URL = %v, want https://localhost:9444/mutate-bootstrap-cluster-x-k8s-io-v1beta2-kubeadmconfig",
+			serviceURL,
+		)
 	}
 	if cfg.Webhooks[0].ClientConfig.Service != nil {
 		t.Errorf("service-based Service = %+v, want nil", cfg.Webhooks[0].ClientConfig.Service)
@@ -253,7 +275,7 @@ func TestRewriteAllCRDConversionLoopbackURLRewritten(t *testing.T) {
 				Strategy: apiextensionsv1.WebhookConverter,
 				Webhook: &apiextensionsv1.WebhookConversion{
 					ClientConfig: &apiextensionsv1.WebhookClientConfig{
-						URL: ptr.To("https://127.0.0.1:9443/convert"),
+						URL: new("https://127.0.0.1:9443/convert"),
 					},
 					ConversionReviewVersions: []string{"v1"},
 				},
@@ -284,13 +306,18 @@ func TestRewriteAllURLFormIdempotent(t *testing.T) {
 	ca := podCA(t)
 	build := func() []runtime.Object {
 		return []runtime.Object{
-			mutatingWithURL("hypervisor-mutating-webhook-configuration", "https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster"),
+			mutatingWithURL(
+				"hypervisor-mutating-webhook-configuration",
+				"https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster",
+			),
 			&admissionv1.ValidatingWebhookConfiguration{
 				ObjectMeta: metav1.ObjectMeta{Name: "hypervisor-validating-webhook-configuration"},
 				Webhooks: []admissionv1.ValidatingWebhook{
 					{
-						Name:         "validate.infrastructure.cluster.x-k8s.io",
-						ClientConfig: admissionv1.WebhookClientConfig{URL: ptr.To("https://localhost:9443/validate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisormachine")},
+						Name: "validate.infrastructure.cluster.x-k8s.io",
+						ClientConfig: admissionv1.WebhookClientConfig{
+							URL: new("https://localhost:9443/validate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisormachine"),
+						},
 					},
 				},
 			},
@@ -303,7 +330,7 @@ func TestRewriteAllURLFormIdempotent(t *testing.T) {
 					Conversion: &apiextensionsv1.CustomResourceConversion{
 						Strategy: apiextensionsv1.WebhookConverter,
 						Webhook: &apiextensionsv1.WebhookConversion{
-							ClientConfig: &apiextensionsv1.WebhookClientConfig{URL: ptr.To("https://127.0.0.1:9443/convert")},
+							ClientConfig: &apiextensionsv1.WebhookClientConfig{URL: new("https://127.0.0.1:9443/convert")},
 						},
 					},
 				},
@@ -360,7 +387,10 @@ func TestRewriteAllURLFormIdempotent(t *testing.T) {
 func TestRewriteAllURLCABundleBase64OnWire(t *testing.T) {
 	t.Parallel()
 	ca := podCA(t)
-	cfg := mutatingWithURL("hypervisor-mutating-webhook-configuration", "https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisormachinetemplate")
+	cfg := mutatingWithURL(
+		"hypervisor-mutating-webhook-configuration",
+		"https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisormachinetemplate",
+	)
 	if err := webhookrewrite.RewriteAll(
 		[]runtime.Object{cfg},
 		map[string]int{"hypervisor-system": 9443},
@@ -390,7 +420,10 @@ func TestRewriteAllURLCABundleBase64OnWire(t *testing.T) {
 
 func TestRewriteAllLoopbackURLEmptyCAPEMErrors(t *testing.T) {
 	t.Parallel()
-	cfg := mutatingWithURL("hypervisor-mutating-webhook-configuration", "https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster")
+	cfg := mutatingWithURL(
+		"hypervisor-mutating-webhook-configuration",
+		"https://127.0.0.1:9443/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-hypervisorcluster",
+	)
 	if err := webhookrewrite.RewriteAll(
 		[]runtime.Object{cfg},
 		map[string]int{"hypervisor-system": 9443},

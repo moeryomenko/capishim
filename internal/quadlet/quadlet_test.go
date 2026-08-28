@@ -86,6 +86,7 @@ package quadlet_test
 import (
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -130,9 +131,9 @@ func unitValue(t *testing.T, unit, key string) string {
 func unitValues(t *testing.T, unit, key string) []string {
 	t.Helper()
 	var vals []string
-	for _, line := range strings.Split(unit, "\n") {
-		if strings.HasPrefix(line, key+"=") {
-			vals = append(vals, strings.TrimPrefix(line, key+"="))
+	for line := range strings.SplitSeq(unit, "\n") {
+		if after, ok := strings.CutPrefix(line, key+"="); ok {
+			vals = append(vals, after)
 		}
 	}
 	if len(vals) == 0 {
@@ -155,7 +156,7 @@ func unitContains(t *testing.T, unit, want string) {
 func sectionOf(t *testing.T, unit, key string) string {
 	t.Helper()
 	section := ""
-	for _, line := range strings.Split(unit, "\n") {
+	for line := range strings.SplitSeq(unit, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			section = line
@@ -464,10 +465,8 @@ func TestRenderVolumes(t *testing.T) {
 	}
 	wantIn := func(name, want string) {
 		t.Helper()
-		for _, v := range unitValues(t, units[name], "Volume") {
-			if v == want {
-				return
-			}
+		if slices.Contains(unitValues(t, units[name], "Volume"), want) {
+			return
 		}
 		t.Errorf("%s missing Volume=%s; got %v", name, want, unitValues(t, units[name], "Volume"))
 	}
@@ -637,10 +636,8 @@ func TestRenderEnvironment(t *testing.T) {
 	units := renderWith(t, testVersion, testBind)
 	wantIn := func(name, want string) {
 		t.Helper()
-		for _, v := range unitValues(t, units[name], "Environment") {
-			if v == want {
-				return
-			}
+		if slices.Contains(unitValues(t, units[name], "Environment"), want) {
+			return
 		}
 		t.Errorf("%s missing Environment=%s; got %v", name, want, unitValues(t, units[name], "Environment"))
 	}

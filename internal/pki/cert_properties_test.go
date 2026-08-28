@@ -4,15 +4,14 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"net"
+	"slices"
 	"testing"
 )
 
 func assertDNSName(t *testing.T, cert *x509.Certificate, want string) {
 	t.Helper()
-	for _, dns := range cert.DNSNames {
-		if dns == want {
-			return
-		}
+	if slices.Contains(cert.DNSNames, want) {
+		return
 	}
 	t.Errorf("certificate %s missing DNS SAN %q; have %v", cert.Subject.CommonName, want, cert.DNSNames)
 }
@@ -29,10 +28,8 @@ func assertIP(t *testing.T, cert *x509.Certificate, want net.IP) {
 
 func assertExtKeyUsage(t *testing.T, cert *x509.Certificate, want x509.ExtKeyUsage) {
 	t.Helper()
-	for _, usage := range cert.ExtKeyUsage {
-		if usage == want {
-			return
-		}
+	if slices.Contains(cert.ExtKeyUsage, want) {
+		return
 	}
 	t.Errorf("certificate %s missing ExtKeyUsage %v; have %v", cert.Subject.CommonName, want, cert.ExtKeyUsage)
 }

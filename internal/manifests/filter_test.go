@@ -5,6 +5,7 @@
 package manifests_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,12 +15,7 @@ import (
 )
 
 func contains(kinds []string, kind string) bool {
-	for _, k := range kinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(kinds, kind)
 }
 
 func TestKeep(t *testing.T) {
@@ -76,10 +72,10 @@ func TestKeep(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			obj := &unstructured.Unstructured{Object: map[string]interface{}{
+			obj := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": tt.apiVersion,
 				"kind":       tt.kind,
-				"metadata":   map[string]interface{}{"name": "obj"},
+				"metadata":   map[string]any{"name": "obj"},
 			}}
 			if got := manifests.Keep(obj); got != tt.want {
 				t.Errorf("Keep(%s/%s) = %v, want %v", tt.apiVersion, tt.kind, got, tt.want)

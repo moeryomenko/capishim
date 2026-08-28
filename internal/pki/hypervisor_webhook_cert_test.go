@@ -29,8 +29,8 @@ import (
 // names a webhook client can use to reach the provider from inside the podman
 // network namespace.
 var (
-	defaultWebhookDNS = []string{"localhost", "host.containers.internal"}
-	defaultWebhookIPs = []net.IP{net.ParseIP("127.0.0.1")}
+	defaultWebhookDNS = []string{"localhost", "host.containers.internal"} //nolint:gochecknoglobals // test fixture
+	defaultWebhookIPs = []net.IP{net.ParseIP("127.0.0.1")}                //nolint:gochecknoglobals // test fixture
 )
 
 // generateWithHost runs pki.Generate with an explicit hypervisor webhook host
@@ -110,10 +110,18 @@ func TestGenerateHypervisorWebhookCertDefaultSANs(t *testing.T) {
 		assertSANIncludesIP(t, cert, ip)
 	}
 	if len(cert.DNSNames) != len(defaultWebhookDNS) {
-		t.Errorf("certificate DNS SANs = %v, want exactly %v when no override host is configured", cert.DNSNames, defaultWebhookDNS)
+		t.Errorf(
+			"certificate DNS SANs = %v, want exactly %v when no override host is configured",
+			cert.DNSNames,
+			defaultWebhookDNS,
+		)
 	}
 	if len(cert.IPAddresses) != len(defaultWebhookIPs) {
-		t.Errorf("certificate IP SANs = %v, want exactly %v when no override host is configured", cert.IPAddresses, defaultWebhookIPs)
+		t.Errorf(
+			"certificate IP SANs = %v, want exactly %v when no override host is configured",
+			cert.IPAddresses,
+			defaultWebhookIPs,
+		)
 	}
 	assertKeyMatchesCert(t, certPath, keyPath)
 }
@@ -178,10 +186,18 @@ func TestGenerateHypervisorWebhookCertOverrideHostEqualsDefault(t *testing.T) {
 		}
 	}
 	if len(cert.DNSNames) != len(defaultWebhookDNS) {
-		t.Errorf("certificate DNS SANs = %v, want exactly %v when the override equals the default", cert.DNSNames, defaultWebhookDNS)
+		t.Errorf(
+			"certificate DNS SANs = %v, want exactly %v when the override equals the default",
+			cert.DNSNames,
+			defaultWebhookDNS,
+		)
 	}
 	if len(cert.IPAddresses) != len(defaultWebhookIPs) {
-		t.Errorf("certificate IP SANs = %v, want exactly %v when the override equals the default", cert.IPAddresses, defaultWebhookIPs)
+		t.Errorf(
+			"certificate IP SANs = %v, want exactly %v when the override equals the default",
+			cert.IPAddresses,
+			defaultWebhookIPs,
+		)
 	}
 }
 

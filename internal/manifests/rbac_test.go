@@ -119,7 +119,7 @@ func requireSubject(t *testing.T, binding *unstructured.Unstructured, idx int, k
 	if len(subjects) <= idx {
 		t.Fatalf("binding %s has %d subjects, want more than %d", binding.GetName(), len(subjects), idx)
 	}
-	s, ok := subjects[idx].(map[string]interface{})
+	s, ok := subjects[idx].(map[string]any)
 	if !ok {
 		t.Fatalf("binding %s subject %d is %T, want map", binding.GetName(), idx, subjects[idx])
 	}
@@ -158,11 +158,11 @@ func firstAggregationMatchLabels(t *testing.T, obj *unstructured.Unstructured) m
 	if err != nil || !found || len(selectors) == 0 {
 		t.Fatalf("ClusterRole %s has no aggregationRule.clusterRoleSelectors: %v", obj.GetName(), err)
 	}
-	sel, ok := selectors[0].(map[string]interface{})
+	sel, ok := selectors[0].(map[string]any)
 	if !ok {
 		t.Fatalf("ClusterRole %s selector 0 is %T, want map", obj.GetName(), selectors[0])
 	}
-	matchLabels, ok := sel["matchLabels"].(map[string]interface{})
+	matchLabels, ok := sel["matchLabels"].(map[string]any)
 	if !ok {
 		t.Fatalf("ClusterRole %s selector 0 has no matchLabels", obj.GetName())
 	}
@@ -342,19 +342,19 @@ func TestRewriteRBACSubjectsPreservesOtherKinds(t *testing.T) {
 
 func TestRewriteRBACSubjectsPreservesNonServiceAccountSubjects(t *testing.T) {
 	t.Parallel()
-	crb := &unstructured.Unstructured{Object: map[string]interface{}{
+	crb := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1",
 		"kind":       "ClusterRoleBinding",
-		"metadata":   map[string]interface{}{"name": "mixed"},
-		"roleRef": map[string]interface{}{
+		"metadata":   map[string]any{"name": "mixed"},
+		"roleRef": map[string]any{
 			"apiGroup": "rbac.authorization.k8s.io",
 			"kind":     "ClusterRole",
 			"name":     "some-role",
 		},
-		"subjects": []interface{}{
-			map[string]interface{}{"kind": "ServiceAccount", "name": "capi-manager", "namespace": "capi-system"},
-			map[string]interface{}{"kind": "User", "name": "human", "apiGroup": "rbac.authorization.k8s.io"},
-			map[string]interface{}{"kind": "Group", "name": "developers", "apiGroup": "rbac.authorization.k8s.io"},
+		"subjects": []any{
+			map[string]any{"kind": "ServiceAccount", "name": "capi-manager", "namespace": "capi-system"},
+			map[string]any{"kind": "User", "name": "human", "apiGroup": "rbac.authorization.k8s.io"},
+			map[string]any{"kind": "Group", "name": "developers", "apiGroup": "rbac.authorization.k8s.io"},
 		},
 	}}
 
@@ -370,17 +370,17 @@ func TestRewriteRBACSubjectsPreservesNonServiceAccountSubjects(t *testing.T) {
 
 func TestRewriteRBACSubjectsUnmappedSubjectNamespace(t *testing.T) {
 	t.Parallel()
-	crb := &unstructured.Unstructured{Object: map[string]interface{}{
+	crb := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1",
 		"kind":       "ClusterRoleBinding",
-		"metadata":   map[string]interface{}{"name": "orphan"},
-		"roleRef": map[string]interface{}{
+		"metadata":   map[string]any{"name": "orphan"},
+		"roleRef": map[string]any{
 			"apiGroup": "rbac.authorization.k8s.io",
 			"kind":     "ClusterRole",
 			"name":     "some-role",
 		},
-		"subjects": []interface{}{
-			map[string]interface{}{"kind": "ServiceAccount", "name": "manager", "namespace": "unknown-system"},
+		"subjects": []any{
+			map[string]any{"kind": "ServiceAccount", "name": "manager", "namespace": "unknown-system"},
 		},
 	}}
 	if _, err := manifests.RewriteRBACSubjects([]unstructured.Unstructured{*crb}, providerCNByNamespace()); err == nil {
@@ -390,17 +390,17 @@ func TestRewriteRBACSubjectsUnmappedSubjectNamespace(t *testing.T) {
 
 func TestRewriteRBACSubjectsRoleBindingWithoutNamespace(t *testing.T) {
 	t.Parallel()
-	rb := &unstructured.Unstructured{Object: map[string]interface{}{
+	rb := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1",
 		"kind":       "RoleBinding",
-		"metadata":   map[string]interface{}{"name": "homeless"},
-		"roleRef": map[string]interface{}{
+		"metadata":   map[string]any{"name": "homeless"},
+		"roleRef": map[string]any{
 			"apiGroup": "rbac.authorization.k8s.io",
 			"kind":     "Role",
 			"name":     "leader-election",
 		},
-		"subjects": []interface{}{
-			map[string]interface{}{"kind": "ServiceAccount", "name": "capi-manager", "namespace": "capi-system"},
+		"subjects": []any{
+			map[string]any{"kind": "ServiceAccount", "name": "capi-manager", "namespace": "capi-system"},
 		},
 	}}
 	// Design decision: a namespaced RoleBinding with no namespace cannot be

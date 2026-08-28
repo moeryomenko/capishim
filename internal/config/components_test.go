@@ -31,7 +31,12 @@ func TestComponentsOrder(t *testing.T) {
 	}
 	for i, id := range want {
 		if got[i].ID != id {
-			t.Errorf("Components()[%d].ID = %q, want %q (boot order pki -> etcd -> apiserver -> setup -> managers is locked)", i, got[i].ID, id)
+			t.Errorf(
+				"Components()[%d].ID = %q, want %q (boot order pki -> etcd -> apiserver -> setup -> managers is locked)",
+				i,
+				got[i].ID,
+				id,
+			)
 		}
 	}
 }

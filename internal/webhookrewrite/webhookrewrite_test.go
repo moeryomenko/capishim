@@ -71,7 +71,7 @@ func serviceRef(namespace, name, path string) *admissionv1.ServiceReference {
 	return &admissionv1.ServiceReference{
 		Namespace: namespace,
 		Name:      name,
-		Path:      ptr.To(path),
+		Path:      new(path),
 	}
 }
 
@@ -259,7 +259,7 @@ func TestRewriteAllProviderPortMapping(t *testing.T) {
 							Service: &apiextensionsv1.ServiceReference{
 								Namespace: "capi-kubeadm-control-plane-system",
 								Name:      "capi-kubeadm-control-plane-webhook-service",
-								Path:      ptr.To("/convert"),
+								Path:      new("/convert"),
 							},
 						},
 						ConversionReviewVersions: []string{"v1"},
@@ -405,7 +405,7 @@ func TestRewriteCRDConversionServiceToURL(t *testing.T) {
 						Service: &apiextensionsv1.ServiceReference{
 							Namespace: "capi-kubeadm-control-plane-system",
 							Name:      "capi-kubeadm-control-plane-webhook-service",
-							Path:      ptr.To("/convert"),
+							Path:      new("/convert"),
 						},
 					},
 					ConversionReviewVersions: []string{"v1"},
@@ -627,7 +627,7 @@ func TestRewriteClientConfigEmptyPath(t *testing.T) {
 		path *string
 	}{
 		{name: "nil path"},
-		{name: "empty string path", path: ptr.To("")},
+		{name: "empty string path", path: new("")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

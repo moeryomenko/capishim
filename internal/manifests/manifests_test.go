@@ -449,10 +449,10 @@ func TestApplyDuplicateIdentifiers(t *testing.T) {
 	t.Parallel()
 	client := newDynamicFake(t)
 	obj := func(name string) unstructured.Unstructured {
-		return unstructured.Unstructured{Object: map[string]interface{}{
+		return unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Namespace",
-			"metadata":   map[string]interface{}{"name": name},
+			"metadata":   map[string]any{"name": name},
 		}}
 	}
 
@@ -468,10 +468,10 @@ func TestApplySameNameDifferentNamespaces(t *testing.T) {
 	t.Parallel()
 	client := newDynamicFake(t)
 	rb := func(ns string) unstructured.Unstructured {
-		return unstructured.Unstructured{Object: map[string]interface{}{
+		return unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "rbac.authorization.k8s.io/v1",
 			"kind":       "RoleBinding",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "shared",
 				"namespace": ns,
 			},
@@ -490,10 +490,10 @@ func TestApplySameNameDifferentNamespaces(t *testing.T) {
 func TestApplyRejectsUnmappedKind(t *testing.T) {
 	t.Parallel()
 	client := newDynamicFake(t)
-	dep := unstructured.Unstructured{Object: map[string]interface{}{
+	dep := unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apps/v1",
 		"kind":       "Deployment",
-		"metadata":   map[string]interface{}{"name": "nope"},
+		"metadata":   map[string]any{"name": "nope"},
 	}}
 	if err := manifests.Apply(t.Context(), client, []unstructured.Unstructured{dep}); err == nil {
 		t.Error("Apply of a Deployment (unmapped kind) returned no error, want error")
