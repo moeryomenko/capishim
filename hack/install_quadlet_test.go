@@ -19,11 +19,12 @@
 // because install-quadlet.sh never created <state>/etcd, <state>/pki,
 // <state>/kubeconfigs, <state>/abac, or the per-manager webhook cert dirs.
 // These tests pin the installer to the same contract the e2e driver enforces.
-package hack
+package hack_test
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -38,13 +39,13 @@ import (
 // --authorization-policy-file=<state>/abac/policy.json, so the installer must
 // produce the file (with its trailing newline) before the stack boots
 // (REQ-004, VC-01).
-const wantPolicy = `{"apiVersion":"abac.authorization.kubernetes.io/v1beta1","kind":"Policy","spec":{"user":"capishim:admin","namespace":"*","resource":"*","apiGroup":"*","nonResourcePath":"*"}}` + "\n"
+const wantPolicy = `{"apiVersion":"abac.authorization.kubernetes.io/v1beta1","kind":"Policy","spec":{"user":"capishim:admin","namespace":"*","resource":"*","apiGroup":"*","nonResourcePath":"*"}}` + "\n" //nolint:lll
 
 // wantStateDirs are the state subdirectories the quadlet containers bind-mount
 // (REQ-009), mirroring e2e/shim/cluster_provider.go ensureStateDirs: etcd
 // data, pki certs, manager kubeconfigs, the ABAC policy dir, and one webhook
 // cert dir per provider manager.
-var wantStateDirs = []string{
+var wantStateDirs = []string{ //nolint:gochecknoglobals // test fixture
 	"pki",
 	"etcd",
 	"kubeconfigs",
@@ -135,7 +136,7 @@ func runInstallQuadlet(t *testing.T, homeDir, stateDir string) (string, error) {
 	cmd.Stderr = &out
 	err = cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		return out.String(), fmt.Errorf("install-quadlet timed out after 4 minutes")
+		return out.String(), errors.New("install-quadlet timed out after 4 minutes")
 	}
 	return out.String(), err
 }
@@ -178,7 +179,7 @@ func assertABACPolicy(t *testing.T, stateDir string) []byte {
 // (REQ-004), so a clean host that runs `make images && make install-quadlet
 // && systemctl --user daemon-reload && systemctl --user start capishim-pod`
 // boots all containers (VC-01, REQ-011).
-func TestInstallQuadletPreparesStateDirs(t *testing.T) {
+func TestInstallQuadletPreparesStateDirs(t *testing.T) { //nolint:paralleltest // runs real installer
 	homeDir := t.TempDir()
 	stateDir := filepath.Join(t.TempDir(), "capishim-state")
 
@@ -194,7 +195,7 @@ func TestInstallQuadletPreparesStateDirs(t *testing.T) {
 // TestInstallQuadletIdempotent runs the installer twice against the same HOME
 // and state dir: the second run must succeed and must not change the ABAC
 // policy (REQ-004, VC-02-style idempotency for the installer path).
-func TestInstallQuadletIdempotent(t *testing.T) {
+func TestInstallQuadletIdempotent(t *testing.T) { //nolint:paralleltest // runs real installer
 	homeDir := t.TempDir()
 	stateDir := filepath.Join(t.TempDir(), "capishim-state")
 
@@ -218,7 +219,7 @@ func TestInstallQuadletIdempotent(t *testing.T) {
 // TestInstallQuadletHonorsCustomStateDir proves CAPISHIM_STATE_DIR is honored
 // and the script never falls back to the hardcoded default location under the
 // temporary HOME (REQ-009).
-func TestInstallQuadletHonorsCustomStateDir(t *testing.T) {
+func TestInstallQuadletHonorsCustomStateDir(t *testing.T) { //nolint:paralleltest // runs real installer
 	homeDir := t.TempDir()
 	stateDir := filepath.Join(t.TempDir(), "custom", "state")
 
@@ -231,6 +232,10 @@ func TestInstallQuadletHonorsCustomStateDir(t *testing.T) {
 
 	defaultState := filepath.Join(homeDir, ".local", "share", "capishim")
 	if _, err := os.Stat(defaultState); err == nil {
-		t.Errorf("install-quadlet wrote to default state dir %s despite CAPISHIM_STATE_DIR=%s (REQ-009)", defaultState, stateDir)
+		t.Errorf(
+			"install-quadlet wrote to default state dir %s despite CAPISHIM_STATE_DIR=%s (REQ-009)",
+			defaultState,
+			stateDir,
+		)
 	}
 }
