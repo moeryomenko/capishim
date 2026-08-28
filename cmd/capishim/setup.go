@@ -117,7 +117,7 @@ const servedCAPIVersion = "v1beta2"
 // cluster.x-k8s.io subgroups the vendored trees ship (bootstrap, controlplane,
 // infrastructure, runtime, ipam) are outside the v1beta2-only contract and
 // pass through with their versions and conversion webhooks intact.
-var capiServedGroups = map[string]bool{
+var capiServedGroups = map[string]bool{ //nolint:gochecknoglobals // package-level constant set
 	"cluster.x-k8s.io":        true,
 	"addons.cluster.x-k8s.io": true,
 }
@@ -698,8 +698,11 @@ func RestrictCAPIVersionsToV1Beta2(objs []unstructured.Unstructured) []unstructu
 		restricted := obj.DeepCopy()
 		// spec is known to be a map here: crdSpecGroup read spec.group from
 		// it above, and DeepCopy preserves value types.
-		spec := restricted.Object["spec"].(map[string]interface{})
-		spec["versions"] = []interface{}{v1beta2}
+		spec, _ := restricted.Object["spec"].(map[string]any) //nolint:errcheck // known map from DeepCopy
+		if spec == nil {
+			continue
+		}
+		spec["versions"] = []any{v1beta2}
 		delete(spec, "conversion")
 		out = append(out, *restricted)
 	}
@@ -719,22 +722,24 @@ func crdSpecGroup(crd *unstructured.Unstructured) string {
 
 // crdVersionsList returns the CRD's spec.versions entries. The bool is false
 // when spec.versions is absent or not a list, marking the CRD malformed.
-func crdVersionsList(crd *unstructured.Unstructured) ([]interface{}, bool) {
+func crdVersionsList(crd *unstructured.Unstructured) ([]any, bool) {
+	//nolint:errcheck // absent field is a valid "not found" result
 	raw, found, _ := unstructured.NestedFieldNoCopy(crd.Object, "spec", "versions")
-	versions, ok := raw.([]interface{})
+	versions, ok := raw.([]any)
 	return versions, found && ok
 }
 
 // v1Beta2VersionEntry returns the versions entry whose name is
 // servedCAPIVersion. Entries that are not objects are skipped; the bool is
 // false when no entry names servedCAPIVersion.
-func v1Beta2VersionEntry(versions []interface{}) (map[string]interface{}, bool) {
+func v1Beta2VersionEntry(versions []any) (map[string]any, bool) {
 	for _, v := range versions {
-		entry, ok := v.(map[string]interface{})
+		entry, ok := v.(map[string]any)
 		if !ok {
 			continue
 		}
-		if name, _ := entry["name"].(string); name == servedCAPIVersion {
+		name, _ := entry["name"].(string) //nolint:errcheck // string assertion is safe
+		if name == servedCAPIVersion {
 			return entry, true
 		}
 	}

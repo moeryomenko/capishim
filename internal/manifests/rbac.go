@@ -77,7 +77,7 @@ func redirectAggregatedManagerRoleRef(binding *unstructured.Unstructured) {
 	if !found {
 		return
 	}
-	ref, ok := rawRef.(map[string]interface{})
+	ref, ok := rawRef.(map[string]any)
 	if !ok {
 		return
 	}
@@ -99,12 +99,12 @@ func rewriteSubjects(binding *unstructured.Unstructured, cnByNamespace map[strin
 	if !found {
 		return nil
 	}
-	subjects, ok := raw.([]interface{})
+	subjects, ok := raw.([]any)
 	if !ok {
 		return fmt.Errorf("subjects field is %T, want a list", raw)
 	}
 	for i := range subjects {
-		subject, ok := subjects[i].(map[string]interface{})
+		subject, ok := subjects[i].(map[string]any)
 		if !ok {
 			continue
 		}
@@ -120,7 +120,7 @@ func rewriteSubjects(binding *unstructured.Unstructured, cnByNamespace map[strin
 		if !ok {
 			return fmt.Errorf("no manager CN for ServiceAccount subject in namespace %q", ns)
 		}
-		subjects[i] = map[string]interface{}{
+		subjects[i] = map[string]any{
 			fieldKind: subjectKindUser,
 			fieldName: cn,
 		}
@@ -131,19 +131,19 @@ func rewriteSubjects(binding *unstructured.Unstructured, cnByNamespace map[strin
 // AdminClusterRoleBinding returns the ClusterRoleBinding that binds the admin
 // identity to cluster-admin: a User subject named adminCN (REQ-004).
 func AdminClusterRoleBinding(adminCN string) *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]interface{}{
+	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1",
 		"kind":       kindClusterRoleBinding,
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"name": "capishim-admin",
 		},
-		"roleRef": map[string]interface{}{
+		"roleRef": map[string]any{
 			"apiGroup": "rbac.authorization.k8s.io",
 			"kind":     kindClusterRole,
 			"name":     "cluster-admin",
 		},
-		"subjects": []interface{}{
-			map[string]interface{}{
+		"subjects": []any{
+			map[string]any{
 				fieldKind: subjectKindUser,
 				fieldName: adminCN,
 			},

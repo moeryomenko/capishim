@@ -49,7 +49,7 @@ func Parse(r io.Reader) ([]unstructured.Unstructured, error) {
 	decoder := yamlutil.NewYAMLOrJSONDecoder(r, yamlBufferSize)
 	var objs []unstructured.Unstructured
 	for {
-		var raw map[string]interface{}
+		var raw map[string]any
 		err := decoder.Decode(&raw)
 		if errors.Is(err, io.EOF) {
 			break

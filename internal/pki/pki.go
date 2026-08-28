@@ -24,6 +24,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"k8s.io/client-go/util/cert"
@@ -340,7 +341,9 @@ func bindHost(bindAddress string) (string, error) {
 // hypervisorWebhookPaths returns the serving-certificate and key paths of the
 // external hypervisor provider's webhook server under the given state
 // directory (REQ-005).
-func hypervisorWebhookPaths(stateDir string) (string, string) {
+func hypervisorWebhookPaths(
+	stateDir string,
+) (string, string) {
 	dir := filepath.Join(stateDir, hypervisorWebhookCertsRel)
 	return filepath.Join(dir, webhookCertName), filepath.Join(dir, webhookKeyName)
 }
@@ -394,10 +397,8 @@ func appendUniqueIP(ips []net.IP, ip net.IP) []net.IP {
 
 // appendUniqueDNS appends name to dns unless it is already present.
 func appendUniqueDNS(dns []string, name string) []string {
-	for _, have := range dns {
-		if have == name {
-			return dns
-		}
+	if slices.Contains(dns, name) {
+		return dns
 	}
 	return append(dns, name)
 }

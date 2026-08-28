@@ -269,7 +269,12 @@ func rewriteValidatingByNamespace(
 // rewriteCRDByNamespace rewrites the conversion webhook of a CRD: a matching
 // loopback URL goes to the External host, otherwise the port is resolved from
 // the conversion service namespace.
-func rewriteCRDByNamespace(crd *apiextensionsv1.CustomResourceDefinition, ports map[string]int, caPEM []byte, ext externalWebhook) error {
+func rewriteCRDByNamespace(
+	crd *apiextensionsv1.CustomResourceDefinition,
+	ports map[string]int,
+	caPEM []byte,
+	ext externalWebhook,
+) error {
 	conv := crd.Spec.Conversion
 	if conv == nil || conv.Webhook == nil || conv.Webhook.ClientConfig == nil {
 		return nil
@@ -332,14 +337,19 @@ func (e externalWebhook) rewriteLoopbackURL(ccURL **string, caPEM []byte) (bool,
 	}
 	parsed, err := neturl.Parse(**ccURL)
 	if err != nil {
-		return false, nil // an unparseable URL is left untouched
+		//nolint:nilerr // An unparseable URL is left untouched, not an error.
+		return false, nil
 	}
 	port := parsed.Port()
 	if port == "" {
 		return false, nil
 	}
 	portNum, err := strconv.Atoi(port)
-	if err != nil || !e.ports[portNum] {
+	if err != nil {
+		//nolint:nilerr // A non-numeric port is left untouched, not an error.
+		return false, nil
+	}
+	if !e.ports[portNum] {
 		return false, nil
 	}
 	if !isLoopbackAuthority(parsed.Hostname()) {
