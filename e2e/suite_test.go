@@ -331,7 +331,11 @@ func applyInMemoryClusterClass(ctx context.Context, namespace string) {
 
 // applyInMemoryClusterTemplate renders cluster-template-in-memory.yaml with the
 // given variables and applies it into the target namespace.
-func applyInMemoryClusterTemplate(ctx context.Context, namespace, clusterName string, controlPlaneCount, workerCount int) {
+func applyInMemoryClusterTemplate(
+	ctx context.Context,
+	namespace, clusterName string,
+	controlPlaneCount, workerCount int,
+) {
 	data, err := os.ReadFile(filepath.Join(templatesDir(), "cluster-template-in-memory.yaml"))
 	Expect(err).NotTo(HaveOccurred(), "failed to read cluster-template-in-memory.yaml")
 	rendered := renderTemplate(data, map[string]string{
@@ -345,7 +349,9 @@ func applyInMemoryClusterTemplate(ctx context.Context, namespace, clusterName st
 		namespace, clusterName, controlPlaneCount, workerCount))
 	// The Cluster object carries metadata.namespace from the rendered template;
 	// create with polling to absorb transient admission-webhook unavailability.
-	Expect(mgmtClusterProxy.Create(ctx, rendered, framework.CreateWithPolling(webhookOperationTimeout, pollInterval))).To(Succeed())
+	Expect(
+		mgmtClusterProxy.Create(ctx, rendered, framework.CreateWithPolling(webhookOperationTimeout, pollInterval)),
+	).To(Succeed())
 }
 
 // waitForClusterProvisioned waits for the full in-memory provisioning outcome

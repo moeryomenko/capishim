@@ -39,7 +39,9 @@ func TestComponentsOmitHypervisorContainer(t *testing.T) {
 		seen[c.id] = true
 	}
 	if seen["hypervisor"] {
-		t.Error("components(stateDir) includes a hypervisor container; the external manager must not run inside the capishim pod (REQ-004)")
+		t.Error(
+			"components(stateDir) includes a hypervisor container; the external manager must not run inside the capishim pod (REQ-004)",
+		)
 	}
 }
 
@@ -104,7 +106,11 @@ func TestPKIAndSetupMountWebhookCertsDir(t *testing.T) {
 			}
 		}
 		if !mounted {
-			t.Errorf("%s component does not mount %s; the hypervisor webhook serving pair would be written to the ephemeral overlay (REQ-005)", id, want)
+			t.Errorf(
+				"%s component does not mount %s; the hypervisor webhook serving pair would be written to the ephemeral overlay (REQ-005)",
+				id,
+				want,
+			)
 			continue
 		}
 		if readOnly {

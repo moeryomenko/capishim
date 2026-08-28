@@ -301,7 +301,15 @@ func (p *ClusterProvider) boot(ctx context.Context) error {
 			return fmt.Errorf("start manager %s: %w", id, err)
 		}
 	}
-	return p.waitForRunning(ctx, containerPrefix+"etcd", containerPrefix+"apiserver", containerPrefix+"core", containerPrefix+"cabpk", containerPrefix+"kcp", containerPrefix+"capd")
+	return p.waitForRunning(
+		ctx,
+		containerPrefix+"etcd",
+		containerPrefix+"apiserver",
+		containerPrefix+"core",
+		containerPrefix+"cabpk",
+		containerPrefix+"kcp",
+		containerPrefix+"capd",
+	)
 }
 
 // directManagerBinding describes one ClusterRoleBinding the driver creates

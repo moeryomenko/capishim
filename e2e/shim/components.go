@@ -220,7 +220,11 @@ func components(stateDir string) []component {
 // (the v1.14 binaries reject --leader-election-namespace and controller-runtime
 // cannot default the election namespace outside a cluster), and the shared
 // <state>/pki read-only mount their kubeconfigs require.
-func managerComponent(id, providerNamespace string, webhookPort, healthPort, diagnosticsPort int, stateDir string) component {
+func managerComponent(
+	id, providerNamespace string,
+	webhookPort, healthPort, diagnosticsPort int,
+	stateDir string,
+) component {
 	c := component{
 		id:    id,
 		image: "localhost/capishim-" + id + ":v0.1.0",
