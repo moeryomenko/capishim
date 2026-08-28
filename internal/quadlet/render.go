@@ -186,6 +186,8 @@ func unitDataFor(spec config.ComponentSpec, in Input) templateData {
 		data.Exec = "pki"
 	case config.ComponentSetup:
 		data.Exec = "setup"
+	case config.ComponentHypervisor:
+		data.Exec = "" // external component: no in-pod unit is rendered for it.
 	}
 	return data
 }
