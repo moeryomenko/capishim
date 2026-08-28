@@ -112,7 +112,6 @@ linters-settings:
       - typeUnparen
       - uncheckedInlineErr
       - unlabelStmt
-      - unnamedResult
       - valSwap
       - wrapperFunc
   revive:
