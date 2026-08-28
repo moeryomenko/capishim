@@ -1,0 +1,78 @@
+# Build and push capishim images to ghcr.io/moeryomenko.
+#
+# On tags and pushes to main, builds the five provider/setup images and the
+# two stock control-plane images and pushes them to ghcr.io so the k8labs lab
+# host can pull them via `make mgmt-images` (which retags to the localhost/*
+# names the quadlets reference).
+#
+# Rootless podman on ubuntu-latest is used for the build so the image content
+# matches what the local `make images` produces.
+
+name: push-images
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  GHCR_OWNER: moeryomenko
+  CAPISHIM_VERSION: v0.1.0
+
+jobs:
+  push:
+    name: build + push to ghcr.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.26
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      # Compute the image tag: a git tag wins, otherwise main -> "latest".
+      - name: Compute image tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build the five localhost/capishim-*:v0.1.0 images and retag to the
+      # ghcr.io name/tag pair; the etcd/apiserver pins are pulled+retagged by
+      # the same target.
+      - name: Build capishim images
+        run: make images
+
+      - name: Push images to ghcr.io
+        run: |
+          set -euo pipefail
+          for img in capishim-setup capishim-core capishim-cabpk capishim-kcp capishim-capd; do
+            podman tag "localhost/${img}:${CAPISHIM_VERSION}" \
+              "ghcr.io/${GHCR_OWNER}/${img}:${{ steps.tag.outputs.tag }}"
+            podman push "ghcr.io/${GHCR_OWNER}/${img}:${{ steps.tag.outputs.tag }}"
+          done
+          # The two stock control-plane images are re-tagged under the
+          # capishim-* namespace by `make images`; push those too so the
+          # quadlets can pull the whole set.
+          for img in capishim-etcd capishim-apiserver; do
+            podman tag "localhost/${img}:${CAPISHIM_VERSION}" \
+              "ghcr.io/${GHCR_OWNER}/${img}:${{ steps.tag.outputs.tag }}"
+            podman push "ghcr.io/${GHCR_OWNER}/${img}:${{ steps.tag.outputs.tag }}"
+          done
