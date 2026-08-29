@@ -1100,6 +1100,13 @@ spec:
                   RetainDiskOnDelete determines whether the root disk survives VM
                   deletion. Defaults to false: the disk is removed with the VM.
                 type: boolean
+              providerID:
+                description: |-
+                  ProviderID is the infrastructure provider ID in the form
+                  hypervisor://<cluster>/<machine>. It is set by the controller once the
+                  VM has booted; the Cluster API machine controller reads it from
+                  spec.providerID per the infrastructure contract.
+                type: string
             type: object
           status:
             description: HypervisorMachineStatus defines the observed state of HypervisorMachine.
@@ -1344,6 +1351,13 @@ spec:
                           RetainDiskOnDelete determines whether the root disk survives VM
                           deletion. Defaults to false: the disk is removed with the VM.
                         type: boolean
+                      providerID:
+                        description: |-
+                          ProviderID is the infrastructure provider ID in the form
+                          hypervisor://<cluster>/<machine>. It is set by the controller once the
+                          VM has booted; the Cluster API machine controller reads it from
+                          spec.providerID per the infrastructure contract.
+                        type: string
                     type: object
                 required:
                 - spec
