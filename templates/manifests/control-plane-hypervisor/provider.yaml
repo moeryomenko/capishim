@@ -1581,6 +1581,7 @@ rules:
   - hypervisorconfigs
   verbs:
   - create
+  - delete
   - get
   - list
   - patch
@@ -1598,11 +1599,29 @@ rules:
   - cluster.x-k8s.io
   resources:
   - clusters
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
   - clusters/status
   - machines/status
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
+  - machinedeployments
+  verbs:
+  - get
+  - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - cluster.x-k8s.io
@@ -1618,6 +1637,7 @@ rules:
   - controlplane.cluster.x-k8s.io
   resources:
   - hypervisorcontrolplanes
+  - hypervisorupgradeplans
   verbs:
   - get
   - list
@@ -1626,9 +1646,16 @@ rules:
   - controlplane.cluster.x-k8s.io
   resources:
   - hypervisorcontrolplanes/status
+  - hypervisorupgradeplans/status
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - controlplane.cluster.x-k8s.io
+  resources:
+  - hypervisorupgradeplans/finalizers
+  verbs:
   - update
 - apiGroups:
   - infrastructure.cluster.x-k8s.io
